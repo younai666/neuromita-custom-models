@@ -68,71 +68,66 @@ namespace NeuroMita.CustomModels
                 return res;
             }
 
-            // 1) 距离最远的两根
-            string na = null, nb = null;
-            float bestSpan = -1f;
+            // Compare a small set of widely separated pairs and every viable third point.
+            // This avoids letting one unusual limb or accessory bone decide the whole rig alignment.
+            var pairs = new List<(int A, int B, float Span)>();
             for (int i = 0; i < shared.Count; i++)
             {
                 var pa = model.Pos[shared[i]];
                 for (int j = i + 1; j < shared.Count; j++)
-                {
-                    float d = (model.Pos[shared[j]] - pa).sqrMagnitude;
-                    if (d > bestSpan) { bestSpan = d; na = shared[i]; nb = shared[j]; }
-                }
+                    pairs.Add((i, j, (model.Pos[shared[j]] - pa).sqrMagnitude));
             }
-            if (na == null || bestSpan < 1e-8f)
+            pairs.Sort((a, b) => b.Span.CompareTo(a.Span));
+            if (pairs.Count == 0 || pairs[0].Span < 1e-8f)
             {
                 res.Message = "cannot align: all shared bones sit at the same position " +
                               "(the mesh has no usable skeleton)";
                 return res;
             }
 
-            // 2) 离直线 ab 最远的第三根
-            var origin = model.Pos[na];
-            var dir = (model.Pos[nb] - origin).normalized;
-            string nc = null;
-            float bestOff = -1f;
-            foreach (var k in shared)
+            if (pairs.Count > 12) pairs.RemoveRange(12, pairs.Count - 12);
+
+            string na = null, nb = null, nc = null;
+            Matrix4x4 bestFix = Matrix4x4.identity;
+            float bestError = float.PositiveInfinity;
+            foreach (var pair in pairs)
             {
-                if (k == na || k == nb) continue;
-                var rel = model.Pos[k] - origin;
-                var perp = rel - dir * Vector3.Dot(rel, dir);
-                float d = perp.sqrMagnitude;
-                if (d > bestOff) { bestOff = d; nc = k; }
+                var a = shared[pair.A];
+                var b = shared[pair.B];
+                foreach (var c in shared)
+                {
+                    if (c == a || c == b) continue;
+                    if (!BuildBasis(target.Pos[a], target.Pos[b], target.Pos[c], out var basisT) ||
+                        !BuildBasis(model.Pos[a], model.Pos[b], model.Pos[c], out var basisM)) continue;
+
+                    var rot = basisT * Transpose3(basisM);
+                    var fix = Matrix4x4.Translate(target.Pos[a]) * rot * Matrix4x4.Translate(-model.Pos[a]);
+                    float error = 0f;
+                    foreach (var bone in shared)
+                        error += (fix.MultiplyPoint3x4(model.Pos[bone]) - target.Pos[bone]).magnitude;
+
+                    if (error < bestError)
+                    {
+                        bestError = error;
+                        bestFix = fix;
+                        na = a; nb = b; nc = c;
+                    }
+                }
             }
-            if (nc == null || bestOff < 1e-8f)
+
+            if (na == null)
             {
                 res.Message = "cannot align: the shared bones are collinear, " +
                               "so no stable orientation can be derived from them";
                 return res;
             }
 
-            if (!BuildBasis(target.Pos[na], target.Pos[nb], target.Pos[nc], out var basisT) ||
-                !BuildBasis(model.Pos[na],  model.Pos[nb],  model.Pos[nc],  out var basisM))
-            {
-                res.Message = "could not build basis";
-                return res;
-            }
-
-            // rot = basisT * basisM^-1；正交基的逆等于转置
-            var rot = basisT * Transpose3(basisM);
-            var fix = Matrix4x4.Translate(target.Pos[na]) * rot * Matrix4x4.Translate(-model.Pos[na]);
-
             res.Ok = true;
             res.UsedTriad = $"{na}/{nb}/{nc}";
-            res.Fix = fix;
-
-            // 用全部共享骨骼评估拟合质量
-            float sum = 0f;
-            int n = 0;
-            foreach (var k in shared)
-            {
-                sum += (fix.MultiplyPoint3x4(model.Pos[k]) - target.Pos[k]).magnitude;
-                n++;
-            }
-            res.ComparedBones = n;
-            res.Residual = n > 0 ? sum / n : -1f;
-            res.Message = $"triad={res.UsedTriad} bones={n} avgErr={res.Residual:F4}";
+            res.Fix = bestFix;
+            res.ComparedBones = shared.Count;
+            res.Residual = bestError / shared.Count;
+            res.Message = $"triad={res.UsedTriad} bones={res.ComparedBones} avgErr={res.Residual:F4}";
             return res;
         }
 

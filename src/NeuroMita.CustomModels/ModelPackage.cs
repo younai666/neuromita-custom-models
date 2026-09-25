@@ -12,6 +12,7 @@ namespace NeuroMita.CustomModels
         public Mesh Mesh;                   // 已建好的 Unity Mesh
         public string[] BoneNames;          // 与 Bindposes 一一对应
         public Matrix4x4[] Bindposes;       // 绑定姿势（网格空间 -> 骨骼空间）
+        public long SourceMaterialPathId;    // AssetBundle 中原始 SkinnedMeshRenderer 的材质引用
         public string SourceFile;           // 来源文件（FBX 目录包里用于定位同目录贴图）
 
         /// <summary>采样"骨骼名 -> 绑定姿势下该骨骼在网格空间的位置"，供自动对齐使用。</summary>
