@@ -75,7 +75,6 @@ namespace NeuroMita.CustomModels
             return null;
         }
         private static int I(AssetTypeValueField p, string n) { var f = F(p, n); try { return f == null ? -1 : f.AsInt; } catch { return -1; } }
-        private static uint U(AssetTypeValueField p, string n) { var f = F(p, n); try { return f == null ? 0u : f.AsUInt; } catch { return 0u; } }
         private static string S(AssetTypeValueField p, string n) { var f = F(p, n); try { return f == null ? null : f.AsString; } catch { return null; } }
 
         /// <summary>vector 的 Array 元素列表（用于 SubMesh / Matrix4x4 这类结构数组）。</summary>
@@ -99,6 +98,7 @@ namespace NeuroMita.CustomModels
         // ---------- 打开 ----------
         public override bool Open()
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var file = ResolveBundleFile(RootPath);
@@ -111,20 +111,28 @@ namespace NeuroMita.CustomModels
                     Logging.Verbose($"[Bundle] bundle file: {Path.GetFileName(file)}");
 
                 _am = new AssetsManager();
+                var swStep = System.Diagnostics.Stopwatch.StartNew();
                 _bun = _am.LoadBundleFile(file, true);
+                long msLoad = swStep.ElapsedMilliseconds;
                 if (_bun == null) { Logging.Error("[Bundle] LoadBundleFile returned null: " + file); return false; }
 
                 int fileCount = _bun.file.BlockAndDirInfo.DirectoryInfos.Count;
                 Logging.Verbose($"[Bundle] container files = {fileCount}");
 
+                swStep.Restart();
                 _inst = _am.LoadAssetsFileFromBundle(_bun, 0, true);
+                long msAssets = swStep.ElapsedMilliseconds;
                 if (_inst == null) { Logging.Error("[Bundle] no assets file inside the bundle"); return false; }
 
                 Logging.Info($"[Bundle] unity={_inst.file.Metadata.UnityVersion} assets={_inst.file.AssetInfos.Count}");
 
-                BuildNameIndex();
-                CollectMeshes();
-                CollectTextures();
+                swStep.Restart(); BuildNameIndex();      long msIdx = swStep.ElapsedMilliseconds;
+                swStep.Restart(); CollectMeshes();       long msMesh = swStep.ElapsedMilliseconds;
+                swStep.Restart(); CollectTextures();     long msTex = swStep.ElapsedMilliseconds;
+                Logging.Verbose($"[PERF] open '{Path.GetFileName(file)}' total={sw.ElapsedMilliseconds}ms " +
+                             $"[loadBundle={msLoad} loadAssets={msAssets} nameIndex={msIdx} " +
+                             $"meshes={msMesh} textures={msTex}] " +
+                             $"{_parts.Count} parts, {_textures.Count} textures");
                 return _parts.Count > 0;
             }
             catch (Exception e)
@@ -178,6 +186,7 @@ namespace NeuroMita.CustomModels
         // ---------- 遍历网格 ----------
         private void CollectMeshes()
         {
+            var swPass = System.Diagnostics.Stopwatch.StartNew();
             // mesh PathID -> 它的 SkinnedMeshRenderer（用来取骨骼名）
             var smrByMesh = new Dictionary<long, AssetTypeValueField>();
             foreach (var inf in _inst.file.AssetInfos)
@@ -194,6 +203,8 @@ namespace NeuroMita.CustomModels
                 catch { }
             }
 
+            Logging.Verbose($"[PERF]     smrPass={swPass.ElapsedMilliseconds}ms");
+            swPass.Restart();
             foreach (var inf in _inst.file.AssetInfos)
             {
                 if (inf.TypeId != 43) continue;    // Mesh
@@ -211,6 +222,7 @@ namespace NeuroMita.CustomModels
                 {
                     Logging.Warn("[Bundle] mesh build failed: " + e.Message);
                 }
+                Logging.Verbose($"[PERF]     meshPass={swPass.ElapsedMilliseconds}ms");
             }
         }
 
@@ -240,24 +252,36 @@ namespace NeuroMita.CustomModels
                     int fmtId = tf.m_TextureFormat;
 
                     // 解码成 RGBA32（数据可能是 DXT 压缩 + mipmap 链）
+                    var swDec = System.Diagnostics.Stopwatch.StartNew();
                     byte[] rgba = DecodeToRgba32(data, w, h, fmtId);
+                    long msDec = swDec.ElapsedMilliseconds;
                     if (rgba == null)
                     {
                         Logging.Warn($"[Bundle] texture '{nm}': unsupported format {fmtId}");
                         continue;
                     }
 
-                    var tex = new UnityEngine.Texture2D(w, h);
+                    // 不带 mipmap 创建贴图：可以省掉整条 mip 链的构建
+                    // （4096² 的链要算 2200 万像素并分配约 89MB，是切场景卡顿的主因之一）。
+                    UnityEngine.Texture2D tex = null;
+                    try { tex = new UnityEngine.Texture2D(w, h, UnityEngine.TextureFormat.RGBA32, false); } catch { }
+                    if (tex == null) { try { tex = new UnityEngine.Texture2D(w, h); } catch { } }
+                    if (tex == null) { Logging.Warn($"[Bundle] texture '{nm}': 无法创建 Texture2D"); continue; }
                     tex.name = nm;
+
                     int levels = 1;
                     try { levels = tex.mipmapCount; } catch { }
                     if (levels < 1) levels = 1;
+
+                    var swMip = System.Diagnostics.Stopwatch.StartNew();
                     var payload = levels > 1 ? BuildMipChain(rgba, w, h, levels) : rgba;
-                    Logging.Info($"[Bundle] tex '{nm}' {w}x{h} fmtId={fmtId} mips={levels} payload={payload.Length}");
+                    long msMip = swMip.ElapsedMilliseconds;
+
                     tex.LoadRawTextureData(payload);
                     tex.Apply();
                     _textures[nm] = tex;
-                    Logging.Info($"[Bundle] texture '{nm}' {w}x{h} fmt={fmtId} -> rgba={rgba.Length}B");
+                    Logging.Verbose($"[PERF] tex '{nm}' {w}x{h} fmt={fmtId} mips={levels} " +
+                                 $"decode={msDec}ms mip={msMip}ms payload={payload.Length / 1048576.0:F1}MB");
                 }
                 catch (Exception e)
                 {
@@ -585,6 +609,7 @@ namespace NeuroMita.CustomModels
             var weights = new BoneWeight[vcount];
             bool hasNormal = false, hasUv = false;
 
+            var swV = System.Diagnostics.Stopwatch.StartNew();
             for (int v = 0; v < vcount; v++)
             {
                 float w0 = 0, w1 = 0, w2 = 0, w3 = 0;
@@ -642,9 +667,13 @@ namespace NeuroMita.CustomModels
             }
 
             // ---- 索引 ----
+            swV.Stop();
+            var swI = System.Diagnostics.Stopwatch.StartNew();
             byte[] ibraw = ElemBytes(F(mf, "m_IndexBuffer"));
             int indexFormat = I(mf, "m_IndexFormat");   // 0 = UInt16, 1 = UInt32
             var tris = ReadIndices(ibraw, indexFormat, F(mf, "m_SubMeshes"), vcount);
+            swI.Stop();
+            var swB = System.Diagnostics.Stopwatch.StartNew();
 
             // ---- bindpose ----
             var bpList = ElemList(F(mf, "m_BindPose"));
@@ -652,7 +681,10 @@ namespace NeuroMita.CustomModels
             for (int i = 0; i < bpList.Count; i++) bindposes[i] = ReadMatrix(bpList[i]);
 
             // ---- 骨骼名（来自引用它的 SkinnedMeshRenderer） ----
+            swB.Stop();
+            var swN = System.Diagnostics.Stopwatch.StartNew();
             string[] boneNames = ReadBoneNames(smr, bindposes.Length);
+            swN.Stop();
 
             // ---- 建 Mesh ----
             var mesh = new Mesh();
@@ -666,6 +698,7 @@ namespace NeuroMita.CustomModels
             if (repaired > 0)
                 Logging.Verbose($"[Bundle] {name}: repaired {repaired} weightless vertex/vertices");
 
+            var swM = System.Diagnostics.Stopwatch.StartNew();
             mesh.boneWeights = weights;
             mesh.bindposes = bindposes;
             if (tris != null && tris.Length > 0) mesh.triangles = tris;
@@ -704,13 +737,6 @@ namespace NeuroMita.CustomModels
                 }
             }
             catch { return 0; }
-        }
-
-        private static int CountEmpty(string[] a)
-        {
-            int n = 0;
-            foreach (var s in a) if (string.IsNullOrEmpty(s)) n++;
-            return n;
         }
 
         private static int[] ReadIndices(byte[] ib, int format, AssetTypeValueField subMeshes, int vcount)

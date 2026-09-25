@@ -31,6 +31,22 @@ The headline: **AssetBundle packs now work**, and packs no longer need a config 
   collapse to the mesh origin under skinning, which shows up either as a long thin black spike
   dragged out of the model or as a whole part (a helmet, say) vanishing.
 
+### Performance
+
+- **A bundle is now parsed once per session.** Every install used to re-open the container from disk
+  and re-decode its textures — a 4.8 s job for one of the sample packs — and a scene change plus the
+  extra display instance paid that again and again. Parsed results are cached per path; one session
+  showed 19 reuses after 2 parses. This was the cause of the multi-second freeze on every scene switch.
+- **Textures are created without a mip chain.** `Texture2D(w, h, format, false)` lets the plugin skip
+  `BuildMipChain` entirely: a 4096² map otherwise costs ~22M pixel operations and an 89 MB
+  allocation. Decoding is unchanged; chain building drops to 0 ms.
+- **The route table is cached** and the "all routes settled" early-out now runs *before* the
+  directory scan. Previously `DiscoverRoutes` read the filesystem every 2 seconds, forever.
+- **The scene is scanned once per tick**, not once per route, and renderer paths are built once
+  instead of once per route (8 routes meant 8 full passes and 8× the path strings).
+- **Bone lookup is indexed.** `FindByName` walked the whole skeleton tree per bone — O(n²); a 285-bone
+  pack asked for 285 full tree walks per part. One name index per install now serves all lookups.
+
 ### Fixed
 
 - **A long thin spike on some packs** (e.g. *Gothic Mita*'s body, which ships 4 weightless vertices).
@@ -39,6 +55,16 @@ The headline: **AssetBundle packs now work**, and packs no longer need a config 
 - **A model breaking after a scene change.** The skeleton the skin was bound to is destroyed and
   recreated, leaving dangling `bones` references; the route cache is now cleared per scene so the
   model is re-applied.
+- **A pack's texture being applied even when its mesh failed to install.** The install failed, but the
+  atlas was written onto the game's original material anyway — a character kept its own mesh and wore
+  someone else's texture. Textures are now applied only after the swap succeeds.
+- **One pack's texture bleeding onto every character.** Mitae share material instances, so writing
+  `mainTexture` in place repainted all of them. The material is cloned per renderer first.
+- **A latent crash.** `DropMissingWeights` read `mesh.boneWeights` at runtime, which takes IL2CPP down
+  with `0xc0000005`. It only triggered on a pack with a bone the game lacks, so it was invisible until
+  such a pack showed up. A missing bone now logs a warning instead of killing the game.
+- **A part being counted as installed when it was not**, which could report "4/4 parts" for an install
+  that swapped nothing.
 - **A typo in the "waiting for target" guard** (`_waitoogged` → `_waitLogged`); it compiled, but the
   log line would never have printed.
 

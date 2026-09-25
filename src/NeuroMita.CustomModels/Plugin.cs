@@ -78,6 +78,14 @@ namespace NeuroMita.CustomModels
         private readonly HashSet<string> _installedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _routesDoneInScene = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _routeWaitLogged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private List<Route> _routes;
+
+        // 已解析的包缓存：一个包在一个会话里只解析一次。
+        // BundlePackage.Open 要解压整个 bundle 并解码贴图（Dio 那种包一次要 4 秒多），
+        // 而切场景、以及同一角色的多个实例都会重复触发装配 —— 不缓存就是每次切场景卡 4 秒。
+        private static readonly Dictionary<string, ModelPackage> _pkgCache =
+            new Dictionary<string, ModelPackage>(StringComparer.OrdinalIgnoreCase);          // 路由表缓存（DiscoverRoutes 会读磁盘）
+        private int _routeScanTick;
 
         public ModelRuntime(IntPtr ptr) : base(ptr) { }
 
@@ -112,16 +120,29 @@ namespace NeuroMita.CustomModels
 
                 // 1) 先看有没有"角色文件夹"（CustomModels\Player\、CustomModels\Crazy\ ...）
                 //    这种结构下一份安装可以同时管多个角色。
-                var routes = DiscoverRoutes(dir);
+                //
+                // 路由表要缓存：DiscoverRoutes 会**读磁盘**，不能每 2 秒做一次。
+                // 迟到的"已装完"判断也必须放在扫描**之前**，否则读盘永远停不下来。
+                if (_routes == null || _ticks - _routeScanTick > 1800)
+                {
+                    _routes = DiscoverRoutes(dir);
+                    _routeScanTick = _ticks;
+                }
+                var routes = _routes;
+
                 if (routes.Count > 0)
                 {
-                    // 本场景里每个路由都至少装到一个实例后，就没必要继续扫描了
-                    // （扫描要遍历全场 renderer 并拼路径，进新场景时会自动重新开始）。
+                    // 本场景里每个路由都至少装到一个实例后就没必要再扫场景了
+                    // （进新场景时 _routesSettled 会被清掉，自动重新开始）。
                     if (_routesSettled) return false;
+
+                    // 全场 renderer 只取一次、路径只拼一次，供所有路由复用
+                    // （之前是每个路由各扫一遍、各拼一遍，8 个路由就是 8 倍开销）。
+                    var scan = ScanRenderers();
 
                     foreach (var route in routes)
                     {
-                        var roots = FindCharacterRoots(route.Key);
+                        var roots = FindCharacterRoots(route.Key, scan);
                         if (roots.Count == 0)
                         {
                             if (_routeWaitLogged.Add(route.Key))
@@ -258,13 +279,40 @@ namespace NeuroMita.CustomModels
             return routes;
         }
 
+        /// <summary>一次扫描的结果：全场 renderer + 各自预先算好的路径。多个路由复用。</summary>
+        private sealed class SceneScan
+        {
+            public SkinnedMeshRenderer[] Smrs;
+            public string[] Paths;
+        }
+
+        /// <summary>
+        /// 扫一次全场 renderer 并把路径算好。
+        /// 路径拼接（TransformPath）会分配字符串，所以整个 TryRun 里只做一次，
+        /// 而不是每个路由都对全场重算一遍。
+        /// </summary>
+        private static SceneScan ScanRenderers()
+        {
+            var scan = new SceneScan();
+            try
+            {
+                scan.Smrs = UnityEngine.Object.FindObjectsOfType<SkinnedMeshRenderer>(true);
+                if (scan.Smrs == null) { scan.Smrs = new SkinnedMeshRenderer[0]; return scan; }
+                scan.Paths = new string[scan.Smrs.Length];
+                for (int i = 0; i < scan.Smrs.Length; i++)
+                    scan.Paths[i] = scan.Smrs[i] != null ? TransformPath(scan.Smrs[i].transform) : "";
+            }
+            catch { scan.Smrs = new SkinnedMeshRenderer[0]; }
+            return scan;
+        }
+
         /// <summary>
         /// 按角色 id 找出该角色的**所有**骨架根实例。
         /// 同一个角色常常有多个实例：主菜单里的静态展示件（Legacy）、
         /// 游戏内的真身（MitaCore (Start)/Mitas/）、以及旧版残留。
         /// 它们都要装配，玩家无论在哪看到都是新模型。
         /// </summary>
-        private static List<Transform> FindCharacterRoots(string routeKey)
+        private static List<Transform> FindCharacterRoots(string routeKey, SceneScan scan)
         {
             var result = new List<Transform>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -272,20 +320,19 @@ namespace NeuroMita.CustomModels
             {
                 string[] keys;
                 if (!RouteKeys.TryGetValue(routeKey, out keys)) return result;
-
-                var smrs = UnityEngine.Object.FindObjectsOfType<SkinnedMeshRenderer>(true);
-                if (smrs == null) return result;
+                if (scan == null || scan.Smrs == null) return result;
 
                 // 两轮：先收集当前激活的实例（正在显示的那个优先），再收集其余的
                 for (int pass = 0; pass < 2; pass++)
                 {
                     bool wantActive = pass == 0;
-                    foreach (var s in smrs)
+                    for (int i = 0; i < scan.Smrs.Length; i++)
                     {
+                        var s = scan.Smrs[i];
                         if (s == null) continue;
                         if (wantActive && !s.gameObject.activeInHierarchy) continue;
 
-                        var path = TransformPath(s.transform);
+                        var path = scan.Paths[i];
                         foreach (var k in keys)
                         {
                             if (path.IndexOf(k, StringComparison.OrdinalIgnoreCase) < 0) continue;
@@ -301,22 +348,19 @@ namespace NeuroMita.CustomModels
             catch (Exception e) { Logging.Warn("[CM] FindCharacterRoots failed: " + e.Message); }
 
             // 一个都没找到时，Verbose 级别提示场景里有哪些含 "Mita" 的 renderer
-            if (result.Count == 0 && Logging.VerboseEnabled)
+            if (result.Count == 0 && Logging.VerboseEnabled && scan != null && scan.Smrs != null)
             {
                 try
                 {
-                    var all = UnityEngine.Object.FindObjectsOfType<SkinnedMeshRenderer>(true);
                     int shown = 0;
-                    if (all != null)
+                    for (int i = 0; i < scan.Smrs.Length && shown < 4; i++)
                     {
-                        foreach (var s in all)
-                        {
-                            if (s == null || shown >= 4) break;
-                            var p = TransformPath(s.transform);
-                            if (p.IndexOf("Mita", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                            Logging.Verbose($"[CM]   waiting; scene has: {p} (active={s.gameObject.activeInHierarchy})");
-                            shown++;
-                        }
+                        var s = scan.Smrs[i];
+                        if (s == null) continue;
+                        var p = scan.Paths[i];
+                        if (p.IndexOf("Mita", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        Logging.Verbose($"[CM]   waiting; scene has: {p} (active={s.gameObject.activeInHierarchy})");
+                        shown++;
                     }
                     if (shown == 0) Logging.Verbose("[CM]   waiting; no renderer path contains 'Mita'");
                 }
@@ -405,20 +449,33 @@ namespace NeuroMita.CustomModels
             var fmt = ModelPackage.DetectFormat(path);
             Logging.Info($"[CM] format: {fmt}");
 
-            var pkg = ModelPackage.Open(path);
-            if (pkg == null)
+            // 包只解析一次，之后复用。
+            // 解析一个 AssetBundle 要解压整个容器并解码贴图（实测 Dio 那种包一次 4 秒多），
+            // 而切场景、以及同一角色的多个实例都会重复触发装配 —— 不缓存就是每次切场景卡好几秒。
+            // 缓存里的 Mesh 由 ModelApplier 克隆后使用，纹理可以直接共享。
+            ModelPackage pkg;
+            if (!_pkgCache.TryGetValue(path, out pkg) || pkg == null)
             {
-                Logging.Error($"[CM] unsupported package format: {path}");
-                return;
-            }
-
-            using (pkg)
-            {
+                pkg = ModelPackage.Open(path);
+                if (pkg == null)
+                {
+                    Logging.Error($"[CM] unsupported package format: {path}");
+                    return;
+                }
                 if (!pkg.Open())
                 {
                     Logging.Error($"[CM] failed to open: {path}");
+                    pkg.Dispose();
                     return;
                 }
+                _pkgCache[path] = pkg;
+            }
+            else
+            {
+                Logging.Info("[CM] reusing cached package parse");
+            }
+
+            {
                 Logging.Info($"[CM] parts: {pkg.Parts.Count}");
                 if (pkg.Parts.Count == 0) return;
 
@@ -459,6 +516,9 @@ namespace NeuroMita.CustomModels
                         }
                         var rr = ModelApplier.Apply(slot, p, root);
                         Logging.Info($"[CM] RESULT {rr}");
+                        // 同上：装配失败就不贴贴图，也不能算作"已装配"
+                        // （否则会出现"4/4 成功"的报告，实际上一块都没换上去）。
+                        if (!rr.Ok) continue;
                         ApplyTexture(bp, slot, p.Name);
                         applied++;
                     }
@@ -485,10 +545,13 @@ namespace NeuroMita.CustomModels
                     Logging.Info($"[CM] applying '{part.Name}' -> '{body.gameObject.name}' (whole-body)");
                     var r = ModelApplier.Apply(body, part, root);
                     Logging.Info($"[CM] RESULT {r}");
-                    ApplyTexture(bp, body, part.Name);
 
+                    // 只有网格真的换上去了才贴贴图。
+                    // 之前不判断 r.Ok，装配失败时照样把包的图集写到游戏原材质上 ——
+                    // 结果就是"模型还是原来的，材质变成了别的包的"。
                     if (r.Ok)
                     {
+                        ApplyTexture(bp, body, part.Name);
                         int hidden = HideOtherRenderers(root, body, pkg.Parts.Count);
                         Logging.Info($"[CM] whole-body replace: hid {hidden} other renderer(s)");
                     }
@@ -505,9 +568,18 @@ namespace NeuroMita.CustomModels
                 var tex = PickTexture(bp, partName);
                 if (tex == null) return;
                 var mats = slot.sharedMaterials;
-                if (mats == null) return;
+                if (mats == null || mats.Length == 0) return;
+
                 for (int i = 0; i < mats.Length; i++)
-                    if (mats[i] != null) mats[i].mainTexture = tex;
+                {
+                    if (mats[i] == null) continue;
+                    // **必须克隆**：米塔之间共用材质实例，直接写会把所有米塔一起刷成这张图。
+                    Material m = mats[i];
+                    try { m = new Material(mats[i]); } catch { }
+                    m.mainTexture = tex;
+                    mats[i] = m;
+                }
+                try { slot.sharedMaterials = mats; } catch { }
                 Logging.Info($"[CM]   texture '{tex.name}' -> {slot.gameObject.name}");
             }
             catch (Exception e) { Logging.Warn("[CM] ApplyTexture failed: " + e.Message); }

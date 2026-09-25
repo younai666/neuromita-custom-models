@@ -30,6 +30,7 @@ namespace NeuroMita.CustomModels
         public static Report Apply(SkinnedMeshRenderer target, ModelPart part, Transform skeletonRoot)
         {
             var rep = new Report { Part = part != null ? part.Name : "null" };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 if (target == null || part == null || part.Mesh == null)
@@ -40,6 +41,7 @@ namespace NeuroMita.CustomModels
 
                 var oldMesh = target.sharedMesh;
                 var oldBones = target.bones;
+                long msClone = 0, msTransform = 0;
 
                 // ---- 1) 自动对齐：目标骨架的绑定空间 vs 模型自带的绑定空间 ----
                 var targetSample = AutoAlign.SampleFromMesh(oldBones, oldMesh != null ? oldMesh.bindposes : null);
@@ -58,14 +60,18 @@ namespace NeuroMita.CustomModels
 
                 // ---- 2) 复制网格并把顶点搬到目标空间 ----
                 Mesh mesh = null;
+                var swClone = System.Diagnostics.Stopwatch.StartNew();
                 try { mesh = UnityEngine.Object.Instantiate(part.Mesh).TryCast<Mesh>(); } catch { }
+                msClone = swClone.ElapsedMilliseconds;
                 if (mesh == null)
                 {
                     rep.Message = "mesh clone failed";
                     return rep;
                 }
                 mesh.name = (part.Mesh.name ?? "mesh") + "_aligned";
+                var swTr = System.Diagnostics.Stopwatch.StartNew();
                 TransformMesh(mesh, align.Fix);
+                msTransform = swTr.ElapsedMilliseconds;
 
                 // ---- 3) 目标骨架的 bindpose 表（按骨骼名）----
                 var targetBp = new Dictionary<string, Matrix4x4>(StringComparer.Ordinal);
@@ -87,14 +93,19 @@ namespace NeuroMita.CustomModels
                 int count = part.BoneNames != null ? part.BoneNames.Length : 0;
                 var bones = new Transform[count];
                 var bindposes = new Matrix4x4[count];
-                var missingIdx = new HashSet<int>();
                 int missing = 0, bpFromTarget = 0, bpFromModel = 0;
+
+                // 骨骼名索引只建一次。
+                // 之前是每根骨骼都递归走一遍整棵树（O(n²)）—— Lumine 那种 285 根骨骼的包
+                // 就是 8 万次节点访问，纯浪费。
+                var skeletonByName = BuildNameIndex(skeletonRoot);
 
                 for (int i = 0; i < count; i++)
                 {
                     var name = part.BoneNames[i];
-                    var t = ModelApplier.FindByName(skeletonRoot, name);
-                    if (t == null) { t = skeletonRoot; missing++; missingIdx.Add(i); }
+                    Transform t = null;
+                    if (!string.IsNullOrEmpty(name)) skeletonByName.TryGetValue(name, out t);
+                    if (t == null) { t = skeletonRoot; missing++; }
                     bones[i] = t;
 
                     if (!string.IsNullOrEmpty(name) && targetBp.TryGetValue(name, out var mbp))
@@ -115,9 +126,15 @@ namespace NeuroMita.CustomModels
                 }
                 Logging.Verbose($"[Apply] bones={count} missing={missing} bpFromTarget={bpFromTarget} bpFromModel={bpFromModel}");
 
-                // 缺失骨骼的权重必须清掉并重新归一化：
-                // 否则这些顶点会被拉向骨架根，在模型上拖出一条细长尖刺。
-                if (missingIdx.Count > 0) DropMissingWeights(mesh, missingIdx);
+                // 缺失骨骼（游戏骨架里找不到同名骨骼）的顶点会被拉到骨架根，
+                // 视觉上是一条细长尖刺。
+                //
+                // 这里**不**在运行时改 mesh.boneWeights 去清权重：IL2CPP 下读写运行时的
+                // boneWeights 会直接崩（0xc0000005，实测踩过）。缺骨骼时宁可留一条尖刺
+                // 也不能把游戏打崩，所以只报警告。
+                if (missing > 0)
+                    Logging.Warn($"[Apply] {missing} bone(s) not found in the game skeleton; " +
+                                 "their vertices will follow the skeleton root (expect a visible spike)");
 
                 // ---- 5) 装配 ----
                 mesh.bindposes = bindposes;
@@ -128,6 +145,8 @@ namespace NeuroMita.CustomModels
                 rep.Ok = true;
                 rep.Bones = count;
                 rep.Missing = missing;
+                Logging.Verbose($"[PERF] apply '{part.Name}' clone={msClone}ms transform={msTransform}ms " +
+                             $"total={sw.ElapsedMilliseconds}ms verts={part.Mesh.vertexCount}");
                 return rep;
             }
             catch (Exception e)
@@ -136,46 +155,6 @@ namespace NeuroMita.CustomModels
                 Logging.Error("[Apply] failed: " + e);
                 return rep;
             }
-        }
-
-        /// <summary>
-        /// 把绑定到"游戏骨架里不存在"的骨骼上的权重清零，并在剩余权重间重新归一化。
-        /// 这些顶点的骨骼会被占位到骨架根，若不清权重，它们会被从原位拉到骨架根，
-        /// 在模型上表现为一条细长的尖刺（拉扯条）。
-        /// </summary>
-        private static void DropMissingWeights(Mesh mesh, HashSet<int> missingIdx)
-        {
-            try
-            {
-                var ws = mesh.boneWeights;
-                if (ws == null || ws.Length == 0) return;
-
-                for (int v = 0; v < ws.Length; v++)
-                {
-                    var bw = ws[v];
-                    float w0 = bw.weight0, w1 = bw.weight1, w2 = bw.weight2, w3 = bw.weight3;
-                    if (missingIdx.Contains(bw.boneIndex0)) w0 = 0f;
-                    if (missingIdx.Contains(bw.boneIndex1)) w1 = 0f;
-                    if (missingIdx.Contains(bw.boneIndex2)) w2 = 0f;
-                    if (missingIdx.Contains(bw.boneIndex3)) w3 = 0f;
-
-                    float sum = w0 + w1 + w2 + w3;
-                    if (sum > 1e-6f && sum < 0.9999f)
-                    {
-                        w0 /= sum; w1 /= sum; w2 /= sum; w3 /= sum;
-                    }
-                    else if (sum <= 1e-6f)
-                    {
-                        // 整条顶点都绑在缺失骨骼上：退化为跟随骨架根，保持原位不变形
-                        w0 = 1f; bw.boneIndex0 = bw.boneIndex0; w1 = w2 = w3 = 0f;
-                    }
-
-                    bw.weight0 = w0; bw.weight1 = w1; bw.weight2 = w2; bw.weight3 = w3;
-                    ws[v] = bw;
-                }
-                mesh.boneWeights = ws;
-            }
-            catch (Exception e) { Logging.Warn("[Apply] DropMissingWeights failed: " + e.Message); }
         }
 
         private static void TransformMesh(Mesh mesh, Matrix4x4 fix)
@@ -197,18 +176,25 @@ namespace NeuroMita.CustomModels
             mesh.RecalculateBounds();
         }
 
-        /// <summary>按名字在骨架子树里找骨骼。</summary>
-        public static Transform FindByName(Transform root, string name)
+        /// <summary>
+        /// 一次性把骨架子树里所有 transform 按名字建索引（同名只取最靠上的那个）。
+        /// 装配时要按骨骼名查几百次，逐次递归遍历整棵树是 O(n²)。
+        /// </summary>
+        public static Dictionary<string, Transform> BuildNameIndex(Transform root)
         {
-            if (root == null || string.IsNullOrEmpty(name)) return null;
-            if (root.name == name) return root;
-            int c = root.childCount;
-            for (int i = 0; i < c; i++)
-            {
-                var r = FindByName(root.GetChild(i), name);
-                if (r != null) return r;
-            }
-            return null;
+            var map = new Dictionary<string, Transform>(StringComparer.Ordinal);
+            try { Collect(root, map); }
+            catch { }
+            return map;
+        }
+
+        private static void Collect(Transform t, Dictionary<string, Transform> map)
+        {
+            if (t == null) return;
+            var n = t.name;
+            if (!string.IsNullOrEmpty(n) && !map.ContainsKey(n)) map[n] = t;
+            int c = t.childCount;
+            for (int i = 0; i < c; i++) Collect(t.GetChild(i), map);
         }
     }
 }
