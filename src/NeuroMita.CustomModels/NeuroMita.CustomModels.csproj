@@ -4,7 +4,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>NeuroMita.CustomModels</AssemblyName>
     <RootNamespace>NeuroMita.CustomModels</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -80,8 +80,12 @@
       <Private>false</Private>
     </Reference>
 
-    <!-- 仅 FBX 路线需要；AssetBundle 路线不依赖它 -->
+    <!-- FBX 路线：网格解析 -->
     <PackageReference Include="AssimpNet" Version="4.1.0" />
+    <!-- AssetBundle 路线：UnityFS 容器 + 序列化字段解析（MIT） -->
+    <PackageReference Include="AssetsTools.NET" Version="3.0.5" />
+    <!-- AssetBundle 路线：贴图字段解析（MIT） -->
+    <PackageReference Include="AssetsTools.NET.Texture" Version="3.0.2" />
   </ItemGroup>
 
 </Project>

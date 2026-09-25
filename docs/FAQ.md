@@ -7,7 +7,7 @@ Check the log at `BepInEx\LogOutput.log` first — the plugin reports what it is
 **1. Is the plugin even loading?** Look for:
 
 ```
-[Info : BepInEx] Loading [NeuroMita.CustomModels 0.1.0]
+[Info : BepInEx] Loading [NeuroMita.CustomModels 0.2.0]
 [CM] runtime injected
 ```
 
@@ -94,12 +94,11 @@ an FBX variant of the pack from the same author.
 
 ## The plugin supports `.vrmmod` files, right?
 
-**No.** Packs stored as a `UnityFS` AssetBundle (`.vrmmod` and similar) cannot be loaded at runtime
-on this game, and this is not a missing feature — it is technically impossible from a plugin.
+**Yes**, since 0.2.0.
 
-The game never loads AssetBundles itself (all its assets are compiled into the build), so the
-subsystem is never initialised and the type is never registered. Every route was tried and all of
-them fail:
+Packs stored as a `UnityFS` AssetBundle (`.vrmmod` and similar) cannot go through Unity's own
+AssetBundle API on this game — the game never loads an AssetBundle itself, so the subsystem is never
+initialised and the type is never registered. Every route fails:
 
 | Route | Result |
 |---|---|
@@ -108,7 +107,14 @@ them fail:
 | `AssetBundle.LoadFromStream(Stream)` | needs `Il2CppSystem.IO.Stream`, which cannot be obtained |
 | native `il2cpp_runtime_invoke` | `NativeClassPtr == 0` — the class was never registered |
 
-**Use the FBX version of the pack.** Most MiSide packs are published in FBX form.
+So the plugin **parses the container itself** in managed code (AssetsTools.NET + its own vertex,
+index and texture decoders) and builds the `Mesh` by hand. Nothing is loaded through Unity's
+AssetBundle subsystem.
+
+**The catch is the skeleton, not the container.** A `.vrmmod` whose bones are named after the game
+skeleton installs perfectly. One built on a foreign rig (`ValveBiped.*`, `mixamorig:*`, `_N_joint_*`)
+is read fine but cannot be driven — the log says
+`incompatible rig: only N of M bones share a name`. Retargeting is not implemented yet.
 
 ---
 

@@ -14,8 +14,9 @@ It replaces a character's skinned meshes with meshes from an external model pack
 >
 > Gothic Mita installs as `created=1 replaced=3 textured=3 removed=7 failed=0`.
 >
-> The **AssetBundle path is not viable at runtime** on this game and is not implemented — see
-> [AssetBundle packages](#assetbundle-packages-why-they-are-not-supported-at-runtime).
+> **AssetBundle packs work too** (`.vrmmod` and similar). Unity's own loader is unusable on this
+> game, so the plugin parses the `UnityFS` container itself — see
+> [AssetBundle packages](#assetbundle-packages).
 
 ---
 
@@ -30,11 +31,19 @@ What still varies between packs is the **overall orientation** of the exported m
 ## Features
 
 - **Two package formats**
-  - **Unity AssetBundle** (`UnityFS` header; `.vrmmod` and similar) — meshes, skeleton, bind poses, materials and textures come straight from Unity, no third-party parser involved.
+  - **Unity AssetBundle** (`UnityFS` header; `.vrmmod` and similar) — parsed by the plugin itself
+    (Unity's AssetBundle API cannot be used on this game; see [below](#assetbundle-packages)).
   - **FBX pack directory** (`*.fbx` + texture + `addons_config.txt`) — the native format of *Miside Custom Models Loader*.
+- **Drop a pack in, get a character** — a bare pack with no config is matched to the game's renderer
+  slots automatically (`Arm` → `Arms`, `Head` → `HeadPlayer`, …), and if nothing matches it falls back
+  to replacing the whole body and hiding the leftovers.
+- **One folder per character** — `CustomModels\Player\`, `CustomModels\Crazy\`, `CustomModels\Kind\` …
+  so a single install can drive several characters at once. See [Character folders](#character-folders).
 - **Automatic alignment** — no hardcoded rotation; solved from bind poses, with a residual error reported per bone set.
 - **Bind poses taken from the game's own mesh** — the skeleton belongs to the game, so the binding transform must come from the game.
-- **Weight normalisation** — per-vertex influences are taken as top-4 by weight and renormalised.
+- **Weight cleanup** — per-vertex influences are taken as top-4 and renormalised; vertices that no bone
+  drives are repaired (they would otherwise collapse and drag a long spike out of the model).
+- **Textures replaced from the pack** — including DXT1/DXT5 decoding and streamed `.resS` data.
 - **Target selection by Avatar name** — reliable, unlike GameObject names (a scene can contain dozens of unrelated Animators).
 
 ## Requirements
@@ -96,22 +105,29 @@ The short version:
 
 ## Configuration
 
-Currently configured by constants in `Plugin.cs` (`ModelRuntime`):
+Currently configured through `BepInEx\config\com.neuromita.custommodels.cfg`:
 
-| Constant | Meaning |
+| Setting | Meaning |
 |---|---|
-| `PackagePath` | Path to the model pack (a `UnityFS` file, or an FBX pack directory) |
-| `TargetAvatarKeyword` | Which character to replace — matched against the Animator's **Avatar name**, e.g. `Crazy` for `CrazyMitaAvatar` |
-| `TargetRendererKeyword` | Which renderer on that character to replace, e.g. `Body` |
+| `Enabled` | Master switch |
+| `PackDirectory` | Folder scanned for packs (default `CustomModels` next to the game exe) |
+| `TargetAvatar` | Which character to replace — matched against the Animator's **Avatar name** (`Crazy`, `Player`, …). Ignored when character folders are used |
+| `ActivePack` | Install only this pack; empty = all of them |
+| `FallbackRenderer` | Renderer used by a bare `.fbx` (and by the whole-body fallback) |
+| `Verbose` | Log per-part alignment detail |
 
-A proper config file and in-game picker are on the roadmap.
+## Known limitations
 
 ## How it works
 
 ```
 ModelPackage.Open(path)
-   ├─ UnityFS header      → AssetBundlePackage  (AssetBundle.LoadFromFile)
-   └─ directory / .fbx    → FbxDirPackage       (AssimpNet)
+   ├─ UnityFS header      → BundlePackage   (AssetsTools.NET, parses the container itself)
+   ├─ addons_config.txt   → FbxDirPackage   (AssimpNet, config-driven)
+   └─ bare .fbx           → FbxFilePackage  (AssimpNet)
+
+WeightRepair.Fix(vertices, weights, bindposes)     ← when the mesh is built
+   └─ repair vertices no bone drives, then renormalise
 
 ModelApplier.Apply(renderer, part, skeletonRoot)
    ├─ 1. AutoAlign.Solve(targetBindPoses, modelBindPoses) → Matrix4x4
@@ -120,6 +136,9 @@ ModelApplier.Apply(renderer, part, skeletonRoot)
    ├─ 4. bone array: mapped by name, index-preserving (missing → skeleton root)
    └─ 5. assign sharedMesh / bones / rootBone
 ```
+
+Unknown fields, unknown formats and packs with a different rig all degrade to a logged warning
+rather than an exception — one bad pack never takes the game down.
 
 ### Auto-align
 
@@ -155,18 +174,22 @@ See [docs/FORMATS.md](docs/FORMATS.md) for the layout of both formats, the `addo
 - [x] `KeyWord` targeting (`all`, `!Core`, …) matched against the Avatar name
 - [x] Multi-part packs (body / hair / clothes installed as separate meshes)
 - [x] Config file + pack directory scan
-- [ ] Per-mod toggle and an in-game picker (currently all packs in the folder are applied)
+- [x] **AssetBundle (`.vrmmod`) packs** — own UnityFS/AssetsTools.NET parser, no Unity AssetBundle API
+- [x] **Automatic slot matching** for packs without a config (plus whole-body fallback)
+- [x] **Texture replacement**, including DXT1/DXT5 and streamed `.resS` data
+- [x] **Character folders** — `CustomModels\Player\`, `CustomModels\Crazy\`, …
+- [x] **Weight repair** — vertices no bone drives are re-bound instead of collapsing
+- [ ] Humanoid retargeting for packs whose bones are *not* named after the game skeleton
+      (Mixamo `mixamorig:*`, Source `ValveBiped.*`, VRM `_N_joint_*`)
+- [ ] Per-mod toggle and an in-game picker
 - [ ] BlendShape / facial expression mapping
 - [ ] MagicaCloth2 re-binding for hair and skirt physics
-- [ ] Humanoid fallback for packs whose bones are *not* named after the game skeleton (e.g. Mixamo / VRM)
-- [ ] Optional: offline converter for AssetBundle packs (see below)
 
-## AssetBundle packages (why they are not supported at runtime)
+## AssetBundle packages
 
-`.vrmmod` and other `UnityFS` packs are **not loadable at runtime** on this game. This was
-investigated thoroughly; every route is blocked by the same underlying cause — **the game never
-uses AssetBundle itself** (all assets ship inside the build), so the subsystem is never
-initialised and the type is never registered:
+`.vrmmod` and other `UnityFS` packs are supported — but **not** through Unity's own AssetBundle API.
+That API is unusable on this game: it never loads an AssetBundle itself (every asset ships inside the
+build), so the subsystem is never initialised and the type is never registered. Every route fails:
 
 | Route | Result |
 |---|---|
@@ -175,20 +198,60 @@ initialised and the type is never registered:
 | `AssetBundle.LoadFromStream(Stream)` | needs `Il2CppSystem.IO.Stream`, which cannot be obtained |
 | native `il2cpp_runtime_invoke` | `Il2CppClassPointerStore<AssetBundle>.NativeClassPtr == 0` |
 
-The first two are Il2CppInterop generation defects (this game is Unity 6000.3 / metadata v39);
-the last one is fatal and independent of them.
+So the plugin **parses the container in managed code instead**, using
+[AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET) (MIT) for the container and the
+serialised fields, plus its own vertex/index decoder:
 
-**Workaround**: convert the pack offline with UnityPy into a format this plugin can read, or use an
-FBX version of the pack if one exists. Most MiSide model packs are published in the FBX format,
-which is fully supported.
+- UnityFS container, including `.resS` streamed texture data
+- Mesh: vertices, normals, UV0/UV2, bone weights, bone indices, index buffer, bind poses
+- Textures: `RGB24`, `RGBA32`, `ARGB32`, `DXT1` (BC1), `DXT5` (BC3), plus a generated mip chain
+- Skeleton: bone names resolved through the `Transform → GameObject` path-id chain
+
+Two details that cost real debugging time, in case you touch this code:
+
+- **`ChannelInfo` has no `attribute` field.** The vertex attribute id *is* the array index.
+- **`m_DataSize` is 16-byte aligned per stream**, so the raw buffer is a few bytes longer than
+  `stride × vertexCount`. Ignoring that shifts every weight and index by 8 bytes and the model
+  renders as a heap of scattered triangles.
+
+## Character folders
+
+Instead of one global target, you can group packs per character. A top-level folder whose name
+matches a known character id becomes a **character folder**, and each subfolder inside it is one pack:
+
+```
+CustomModels\
+├── Player\
+│   └── MasterChief\MasterChiefMod      → the player
+├── Crazy\
+│   └── Gothic-Mita-by-Index 1.3-80\    → Crazy Mita
+├── Mila\
+└── Ghost\
+```
+
+Recognised folder names: `Player`, `Crazy`, `Kind`, `Cappie` (or `Cappy`), `ShortHair`, `Mila`,
+`Sleepy` (or `Dream`), `Ghost`.
+
+Notes:
+
+- A character can exist **several times in one scene** — the main-menu display copy and the in-game
+  one. All of them are installed, so the model looks right wherever you see it.
+- The cache is cleared on scene change, because reloading destroys the skeleton the skin was bound to.
+- If there is **no** character folder, the plugin falls back to the old behaviour
+  (`TargetAvatar` + `PackDirectory`).
 
 ## Known limitations
 
-- Only one renderer per character is replaced so far; packs that split body/hair/clothes across several meshes will only get their first mesh swapped.
+- **Packs must share the game's bone names.** This is the single biggest restriction. Packs whose
+  skeleton is a different rig (Mixamo `mixamorig:*`, Source `ValveBiped.*`, VRM `_N_joint_*`) are
+  read fine but cannot be driven — the plugin logs
+  `incompatible rig: only N of M bones ... share a name`. Retargeting is not implemented.
 - Facial expressions are lost when the game's `FaceLayer` is hidden. That mesh carries the school-uniform collar in addition to the face, so it collides with a replacement model. Nothing maps pack BlendShapes onto the game's expression system yet.
 - Hair and skirt cloth physics (MagicaCloth2) are not re-bound — expect stiff or misbehaving hair on replacement models.
-- Hand IK targets and item mount points still reference the original bones.
-- Packs whose skeleton is named differently (Mixamo `mixamorig:*`, VRM) are not supported yet, even though both sides are Humanoid. The bones must currently share names with the game skeleton.
+- Hand IK targets and item mount points still reference the original bones. They keep working because
+  only *meshes* are replaced, never the skeleton — but they follow the original proportions.
+- Textures in BC5/BC7/ASTC/ETC/PVRTC are not decoded; the mesh still installs, the texture does not.
+- Compressed meshes (`m_MeshCompression != 0`) and non-`float32` vertex streams are skipped with a warning.
 
 ## Credits and dependencies
 
@@ -196,6 +259,7 @@ which is fully supported.
 |---|---|
 | [AssimpNet](https://bitbucket.org/Starnick/assimpnet) | MIT |
 | [Assimp](https://github.com/assimp/assimp) (native) | BSD-3-Clause |
+| [AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET) | MIT |
 | [BepInEx](https://github.com/BepInEx/BepInEx) | LGPL-2.1 |
 
 See [NOTICE](NOTICE) for the full licence texts of the redistributed libraries.

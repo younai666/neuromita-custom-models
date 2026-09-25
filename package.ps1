@@ -1,4 +1,4 @@
-﻿<#
+<#
     package.ps1 — build and produce a release zip.
 
     Usage:
@@ -70,7 +70,24 @@ New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null
 Copy-Item $pluginDll                                  $pluginDir -Force
 Copy-Item (Join-Path $bin 'AssimpNet.dll')            $pluginDir -Force
 Copy-Item $assimp                                     $pluginDir -Force
+
+# AssetBundle path dependencies (AssetsTools.NET + its texture decoder).
+# Collected by pattern so a version bump does not silently drop one.
+$managedExtras = @(
+    'AssetsTools.NET.dll',
+    'AssetsTools.NET.Texture.dll',
+    'AssetRipper.TextureDecoder.dll'
+)
+foreach ($name in $managedExtras) {
+    $src = Join-Path $bin $name
+    if (Test-Path $src) {
+        Copy-Item $src $pluginDir -Force
+    } else {
+        throw "missing dependency in build output: $name (run: dotnet build -c $Configuration)"
+    }
+}
 Copy-Item (Join-Path $root 'README.md')               $stage -Force
+Copy-Item (Join-Path $root 'CHANGELOG.md')            $stage -Force
 Copy-Item (Join-Path $root 'docs\INSTALL.md')         $stage -Force
 Copy-Item (Join-Path $root 'docs\FAQ.md')             $stage -Force
 Copy-Item (Join-Path $root 'docs\FORMATS.md')         $stage -Force

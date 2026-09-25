@@ -188,8 +188,15 @@ namespace NeuroMita.CustomModels
                 weights[i] = bw;
             }
 
-            mesh.boneWeights = weights;
             var bindposes = bindList.ToArray();
+
+            // 通用权重清理：补上"没有任何骨骼影响"的孤儿顶点并归一化。
+            // 不做这一步时，权重和为零的顶点会塌缩，表现为细长尖刺或整块消失。
+            int repaired = WeightRepair.Fix(verts, weights, bindposes);
+            if (repaired > 0)
+                Logging.Verbose($"[Pkg]   {am.Name}: repaired {repaired} weightless vertex/vertices");
+
+            mesh.boneWeights = weights;
             mesh.bindposes = bindposes;
             mesh.RecalculateBounds();
 

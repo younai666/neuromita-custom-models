@@ -50,17 +50,18 @@ namespace NeuroMita.CustomModels
                     if (File.Exists(Path.Combine(path, "addons_config.txt"))) return "fbx-dir";
                     // 目录里找 .fbx
                     if (Directory.GetFiles(path, "*.fbx", SearchOption.AllDirectories).Length > 0) return "fbx-dir";
+                    // 目录里装着 AssetBundle（.vrmmod / 无扩展名等）
+                    foreach (var f in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+                        if (LooksLikeBundle(f)) return "assetbundle";
                     return "unknown-dir";
                 }
                 if (!File.Exists(path)) return "missing";
+                if (LooksLikeBundle(path)) return "assetbundle";
 
                 using (var fs = File.OpenRead(path))
                 {
                     var buf = new byte[8];
                     int n = fs.Read(buf, 0, 8);
-                    if (n >= 8 && buf[0] == 'U' && buf[1] == 'n' && buf[2] == 'i' && buf[3] == 't' &&
-                        buf[4] == 'y' && buf[5] == 'F' && buf[6] == 'S')
-                        return "assetbundle";
                     if (n >= 6 && buf[0] == 'K' && buf[1] == 'a' && buf[2] == 'y' && buf[3] == 'd' &&
                         buf[4] == 'a' && buf[5] == 'r')
                         return "fbx";
@@ -68,6 +69,23 @@ namespace NeuroMita.CustomModels
             }
             catch { }
             return "unknown";
+        }
+
+        /// <summary>文件头是不是 UnityFS（AssetBundle）。</summary>
+        public static bool LooksLikeBundle(string file)
+        {
+            try
+            {
+                if (!File.Exists(file)) return false;
+                using (var fs = File.OpenRead(file))
+                {
+                    var buf = new byte[8];
+                    int n = fs.Read(buf, 0, 8);
+                    return n >= 7 && buf[0] == 'U' && buf[1] == 'n' && buf[2] == 'i' && buf[3] == 't' &&
+                           buf[4] == 'y' && buf[5] == 'F' && buf[6] == 'S';
+                }
+            }
+            catch { return false; }
         }
 
         /// <summary>按格式打开对应的包实现。</summary>
@@ -82,13 +100,10 @@ namespace NeuroMita.CustomModels
                     return new FbxFilePackage { RootPath = path };
 
                 case "assetbundle":
-                    // 这条路在这个游戏上不可行：游戏自身从不加载 AssetBundle，
-                    // 该子系统从未初始化，类型也从未注册。
-                    // 详见 README 的 "AssetBundle packages" 一节。
-                    Logging.Error(
-                        "[Pkg] AssetBundle packages are not supported at runtime on this game. " +
-                        "Use an FBX version of the pack if one exists, or convert it offline.");
-                    return null;
+                    // 游戏自身从不加载 AssetBundle（该子系统从未初始化、类型从未注册），
+                    // 所以运行时的 AssetBundle.LoadFrom* 全部不可用。
+                    // 这里改为在托管侧自己解析 UnityFS 容器与序列化数据。
+                    return new BundlePackage { RootPath = path };
 
                 default:
                     Logging.Error($"[Pkg] unrecognised package format: {path}");

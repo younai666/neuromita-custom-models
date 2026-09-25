@@ -83,17 +83,18 @@ namespace NeuroMita.CustomModels
                 }
                 Logging.Verbose($"[Apply] target bindpose table: {targetBp.Count} entries");
 
-                // ---- 4) 骨骼映射：保持 1:1 索引，缺失的用骨架根占位，这样权重索引无需重排 ----
+                // ---- 4) 骨骼映射：保持 1:1 索引，缺失的记录出来稍后清权重 ----
                 int count = part.BoneNames != null ? part.BoneNames.Length : 0;
                 var bones = new Transform[count];
                 var bindposes = new Matrix4x4[count];
+                var missingIdx = new HashSet<int>();
                 int missing = 0, bpFromTarget = 0, bpFromModel = 0;
 
                 for (int i = 0; i < count; i++)
                 {
                     var name = part.BoneNames[i];
                     var t = ModelApplier.FindByName(skeletonRoot, name);
-                    if (t == null) { t = skeletonRoot; missing++; }
+                    if (t == null) { t = skeletonRoot; missing++; missingIdx.Add(i); }
                     bones[i] = t;
 
                     if (!string.IsNullOrEmpty(name) && targetBp.TryGetValue(name, out var mbp))
@@ -114,6 +115,10 @@ namespace NeuroMita.CustomModels
                 }
                 Logging.Verbose($"[Apply] bones={count} missing={missing} bpFromTarget={bpFromTarget} bpFromModel={bpFromModel}");
 
+                // 缺失骨骼的权重必须清掉并重新归一化：
+                // 否则这些顶点会被拉向骨架根，在模型上拖出一条细长尖刺。
+                if (missingIdx.Count > 0) DropMissingWeights(mesh, missingIdx);
+
                 // ---- 5) 装配 ----
                 mesh.bindposes = bindposes;
                 target.sharedMesh = mesh;
@@ -131,6 +136,46 @@ namespace NeuroMita.CustomModels
                 Logging.Error("[Apply] failed: " + e);
                 return rep;
             }
+        }
+
+        /// <summary>
+        /// 把绑定到"游戏骨架里不存在"的骨骼上的权重清零，并在剩余权重间重新归一化。
+        /// 这些顶点的骨骼会被占位到骨架根，若不清权重，它们会被从原位拉到骨架根，
+        /// 在模型上表现为一条细长的尖刺（拉扯条）。
+        /// </summary>
+        private static void DropMissingWeights(Mesh mesh, HashSet<int> missingIdx)
+        {
+            try
+            {
+                var ws = mesh.boneWeights;
+                if (ws == null || ws.Length == 0) return;
+
+                for (int v = 0; v < ws.Length; v++)
+                {
+                    var bw = ws[v];
+                    float w0 = bw.weight0, w1 = bw.weight1, w2 = bw.weight2, w3 = bw.weight3;
+                    if (missingIdx.Contains(bw.boneIndex0)) w0 = 0f;
+                    if (missingIdx.Contains(bw.boneIndex1)) w1 = 0f;
+                    if (missingIdx.Contains(bw.boneIndex2)) w2 = 0f;
+                    if (missingIdx.Contains(bw.boneIndex3)) w3 = 0f;
+
+                    float sum = w0 + w1 + w2 + w3;
+                    if (sum > 1e-6f && sum < 0.9999f)
+                    {
+                        w0 /= sum; w1 /= sum; w2 /= sum; w3 /= sum;
+                    }
+                    else if (sum <= 1e-6f)
+                    {
+                        // 整条顶点都绑在缺失骨骼上：退化为跟随骨架根，保持原位不变形
+                        w0 = 1f; bw.boneIndex0 = bw.boneIndex0; w1 = w2 = w3 = 0f;
+                    }
+
+                    bw.weight0 = w0; bw.weight1 = w1; bw.weight2 = w2; bw.weight3 = w3;
+                    ws[v] = bw;
+                }
+                mesh.boneWeights = ws;
+            }
+            catch (Exception e) { Logging.Warn("[Apply] DropMissingWeights failed: " + e.Message); }
         }
 
         private static void TransformMesh(Mesh mesh, Matrix4x4 fix)

@@ -114,8 +114,9 @@ The result must look like this:
    The exact internal layout does not matter — the plugin searches recursively for
    `addons_config.txt` and `*.fbx`.
 
-3. **Use the FBX version of a pack.** Packs distributed as a single `UnityFS` file
-   (`.vrmmod` and similar) cannot be loaded at runtime; see the FAQ.
+3. **AssetBundle packs work as-is.** A single `UnityFS` file (`.vrmmod` and similar) can be dropped
+   straight in — the plugin parses the container itself. Just remember the skeleton still has to
+   match the game's bone names; see the FAQ.
 
 ---
 

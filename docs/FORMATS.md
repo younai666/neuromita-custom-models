@@ -64,23 +64,38 @@ objects:
 
 ### Loading
 
-Unity loads these natively:
+**Unity's own loader cannot be used on this game.** It never loads an AssetBundle itself, so the
+subsystem is never initialised and `AssetBundle` is never registered — every entry point fails
+(missing `ReadOnlySpan.GetPinnableReference`, broken interop array allocation, no
+`Il2CppSystem.IO.Stream`, `NativeClassPtr == 0`).
 
-```csharp
-var bundle = AssetBundle.LoadFromFile(path);
-foreach (var obj in bundle.LoadAllAssets())
-{
-    var go = obj.TryCast<GameObject>();
-    if (go == null) continue;
-    foreach (var smr in go.GetComponentsInChildren<SkinnedMeshRenderer>(true)) { ... }
-}
+So `BundlePackage` reads the container in managed code instead, using **AssetsTools.NET** for the
+container and serialised fields, plus its own decoders:
+
+```
+UnityFS  → blocks → AssetsFile (typetree) → GameObject/Transform/SkinnedMeshRenderer/Mesh/Texture2D
+                                                │
+   bone names  ← Transform.PathID → GameObject.PathID → m_Name
+   mesh        ← m_VertexData (vertex streams) + m_IndexBuffer + m_BindPose
+   texture     ← m_TextureFormat + m_StreamData (".resS" is read out of the container)
 ```
 
-Meshes, bone transforms, bind poses, materials and textures all arrive as ready-to-use Unity
-objects. No third-party parser, no manual vertex/weight conversion.
+Everything ends up as plain managed arrays and is then handed to a hand-built `Mesh`. Nothing goes
+through Unity's AssetBundle API.
 
-**Do not modify the meshes in place** — they are shared assets. Clone first
-(`UnityEngine.Object.Instantiate(mesh)`).
+#### Traps worth knowing
+
+- **`ChannelInfo` has no `attribute` field** (Unity 2021). The vertex attribute id *is* the array
+  index. Reading a field called `attribute` silently gives you the wrong dimension.
+- **Streams are 16-byte aligned** inside `m_VertexData`. The buffer is longer than
+  `stride × vertexCount`; without honouring the padding every weight and index is shifted by 8 bytes
+  and the model comes out as a cloud of scattered triangles.
+- **`m_IndexBuffer` is a byte vector**, not a struct vector — its `Array` node is itself a byte
+  array, unlike `m_BindPose` whose `Array` node has element children.
+- **Texture mip chains**: `Texture2D(int, int)` in IL2CPP creates a full mip chain, so
+  `LoadRawTextureData` needs the whole chain (~89 MB for a 4096² RGBA), not just mip 0.
+- **Do not touch meshes that belong to the game.** They are shared assets — clone first
+  (`UnityEngine.Object.Instantiate(mesh)`).
 
 ---
 
