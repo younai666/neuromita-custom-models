@@ -1,0 +1,21 @@
+# Build output
+dist/
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Local machine configuration — never commit this
+game.dir
+
+# Build artifacts that may end up next to the sources
+*.dll
+*.pdb
+!src/**/*.cs
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~

@@ -1,0 +1,21 @@
+# Normalise line endings so the repo does not churn between platforms.
+* text=auto
+
+# Source and docs are text
+*.cs       text
+*.csproj   text
+*.md       text
+*.ps1      text
+*.yml      text
+*.json     text
+
+# PowerShell scripts on Windows are easier to run with CRLF
+*.ps1      text eol=crlf
+
+# Binary — never touch
+*.dll      binary
+*.pdb      binary
+*.zip      binary
+*.png      binary
+*.jpg      binary
+*.fbx      binary

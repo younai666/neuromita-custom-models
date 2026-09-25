@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>NeuroMita.CustomModels</AssemblyName>
+    <RootNamespace>NeuroMita.CustomModels</RootNamespace>
+    <Version>0.1.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- 类库默认不把 NuGet 依赖复制到输出目录，但插件必须把 AssimpNet.dll 一起分发 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <!--
+    游戏安装路径（含 NeuroMita.exe 和 BepInEx 的那一层）。
+    三种给法，优先级从高到低：
+
+      1. dotnet build -c Release -p:GameDir="D:\Games\NeuroMita"
+      2. 环境变量 NEUROMITA_DIR
+      3. 仓库根目录下的 game.dir 文件（内容就是一行路径）
+
+    不提供默认值 —— 这样别人的机器上不会静默编译出错误的东西。
+  -->
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == '' AND '$(NEUROMITA_DIR)' != ''">$(NEUROMITA_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\game.dir')">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\game.dir').Trim())</GameDir>
+    <BepInExDir Condition="'$(BepInExDir)' == '' AND '$(GameDir)' != ''">$(GameDir)\BepInEx</BepInExDir>
+    <InteropDir Condition="'$(InteropDir)' == '' AND '$(BepInExDir)' != ''">$(BepInExDir)\interop</InteropDir>
+  </PropertyGroup>
+
+  <Target Name="ValidateGamePaths" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(GameDir)' == ''"
+           Text="GameDir is not set. Use -p:GameDir=&quot;...&quot;, set the NEUROMITA_DIR environment variable, or create a game.dir file at the repo root containing the path." />
+    <Error Condition="!Exists('$(GameDir)')"
+           Text="GameDir '$(GameDir)' does not exist." />
+    <Error Condition="!Exists('$(InteropDir)')"
+           Text="Interop assemblies not found at '$(InteropDir)'. Install BepInEx into the game and launch it once so BepInEx generates BepInEx\interop\." />
+  </Target>
+
+  <ItemGroup>
+    <!-- BepInEx -->
+    <Reference Include="BepInEx.Core">
+      <HintPath>$(BepInExDir)\core\BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>$(BepInExDir)\core\BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(BepInExDir)\core\Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExDir)\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- 游戏 interop（首次启动游戏后由 BepInEx 生成） -->
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(InteropDir)\Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(InteropDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(InteropDir)\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>$(InteropDir)\UnityEngine.AssetBundleModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(InteropDir)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- 仅 FBX 路线需要；AssetBundle 路线不依赖它 -->
+    <PackageReference Include="AssimpNet" Version="4.1.0" />
+  </ItemGroup>
+
+</Project>
