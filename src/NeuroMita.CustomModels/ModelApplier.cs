@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
 namespace NeuroMita.CustomModels
@@ -252,6 +253,7 @@ namespace NeuroMita.CustomModels
         {
             int imported = 0;
             if (mesh == null || blendShapes == null) return imported;
+            bool loggedBlendShapeException = false;
             foreach (var shape in blendShapes)
             {
                 if (shape == null || string.IsNullOrWhiteSpace(shape.Name) || shape.Frames == null) continue;
@@ -273,13 +275,35 @@ namespace NeuroMita.CustomModels
                         var deltaVertices = TransformDeltas(frame.DeltaVertices, fix);
                         var deltaNormals = TransformDeltas(frame.DeltaNormals, fix);
                         var deltaTangents = TransformDeltas(frame.DeltaTangents, fix);
-                        mesh.AddBlendShapeFrame(shape.Name, frame.Weight, deltaVertices, deltaNormals, deltaTangents);
+                        // The game's generated array overload also forwards through ReadOnlySpan;
+                        // retain the first full exception in verbose logs to diagnose interop failures.
+                        mesh.AddBlendShapeFrame(shape.Name, frame.Weight,
+                            new Il2CppStructArray<Vector3>(deltaVertices),
+                            new Il2CppStructArray<Vector3>(deltaNormals),
+                            new Il2CppStructArray<Vector3>(deltaTangents));
                         previousWeight = frame.Weight;
                         imported++;
                     }
                     catch (Exception e)
                     {
+                        bool spanInteropUnavailable = e is MissingMethodException &&
+                            e.Message.IndexOf("GetPinnableReference", StringComparison.Ordinal) >= 0;
+                        if (spanInteropUnavailable)
+                        {
+                            if (!loggedBlendShapeException)
+                            {
+                                loggedBlendShapeException = true;
+                                Logging.Warn("[Apply] BlendShape import unavailable: Unity IL2CPP ReadOnlySpan interop method is missing");
+                                Logging.Verbose("[Apply] first BlendShape exception detail: " + e);
+                            }
+                            return imported;
+                        }
                         Logging.Warn($"[Apply] BlendShape '{shape.Name}' frame skipped: {e.Message}");
+                        if (!loggedBlendShapeException)
+                        {
+                            loggedBlendShapeException = true;
+                            Logging.Verbose("[Apply] first BlendShape exception detail: " + e);
+                        }
                     }
                 }
             }

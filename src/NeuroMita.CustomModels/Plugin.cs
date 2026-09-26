@@ -669,41 +669,51 @@ namespace NeuroMita.CustomModels
             return n;
         }
 
-        /// <summary>
-        /// 按部件名给 renderer 打分选最合适的一个。
-        /// 包的部件名千奇百怪（Body / Clothes / Arm / Head / Hair / Sweater...），
-        /// 这里只做"关键词包含"的宽松匹配。
-        /// </summary>
+        /// <summary>按部件、renderer、mesh 和材质语义选择唯一匹配的槽位。</summary>
         private static SkinnedMeshRenderer FindBestRenderer(Transform root, string partName, HashSet<int> usedSlots)
         {
             try
             {
                 var smrs = root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
                 if (smrs == null || smrs.Length == 0) return null;
-
-                string key = null;
-                var low = (partName ?? "").ToLowerInvariant();
-                // 精确槽位名表已移除：其中大部分名字（sweaterslot / skirtslot / shoesslot /
-                // attributeslot）在实测日志里从未出现过，属于猜测。下面的模糊匹配本就覆盖
-                // 这些情况，而且不依赖硬编码的游戏内部命名。
-                if (low.Contains("hair")) key = "hair";
-                else if (low.Contains("head") || low.Contains("face")) key = "head";
-                else if (low.Contains("arm") || low.Contains("hand") || low.Contains("glove")) key = "arm";
-                else if (low.Contains("cloth") || low.Contains("sweater") || low.Contains("body")
-                         || low.Contains("skirt") || low.Contains("pant") || low.Contains("shoe")) key = "body";
-
-                if (key == null) return null;
-
+                SkinnedMeshRenderer best = null;
+                int bestScore = 0;
+                bool ambiguous = false;
                 foreach (var s in smrs)
                 {
                     if (s == null || usedSlots.Contains(s.GetInstanceID())) continue;
-                    var n = (s.gameObject != null ? s.gameObject.name : "").ToLowerInvariant();
-                    bool hit = key == "hair" ? n.Contains("hair")
-                             : key == "head" ? (n.Contains("head") || n.Contains("face"))
-                             : key == "arm" ? n.Contains("arm")
-                             : (n.Contains("body") || n.Contains("cloth"));
-                    if (hit) return s;
+                    var materialNames = new List<string>();
+                    try
+                    {
+                        var materials = s.sharedMaterials;
+                        if (materials != null)
+                            foreach (var material in materials)
+                                if (material != null) materialNames.Add(material.name);
+                    }
+                    catch { }
+                    string rendererName = s.gameObject != null ? s.gameObject.name : "";
+                    string meshName = s.sharedMesh != null ? s.sharedMesh.name : "";
+                    int score = RendererSlotMatcher.Score(partName, rendererName, meshName, materialNames);
+                    if (score > bestScore)
+                    {
+                        best = s;
+                        bestScore = score;
+                        ambiguous = false;
+                    }
+                    else if (score > 0 && score == bestScore)
+                    {
+                        ambiguous = true;
+                    }
                 }
+                if (ambiguous)
+                {
+                    Logging.Warn($"[CM] ambiguous renderer slots for part '{partName}' (score={bestScore}); skipped");
+                    return null;
+                }
+                if (best != null)
+                    Logging.Verbose($"[CM] slot match part='{partName}' renderer='{best.gameObject.name}' " +
+                                    $"mesh='{(best.sharedMesh != null ? best.sharedMesh.name : "")}' score={bestScore}");
+                return best;
             }
             catch { }
             return null;
