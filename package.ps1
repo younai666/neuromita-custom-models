@@ -110,6 +110,24 @@ Get-ChildItem $pluginDir -File | ForEach-Object {
     Write-Host ("    {0,-34} {1,8:N0} KB" -f $_.Name, ($_.Length / 1KB))
 }
 
+# Normalise line endings for everything textual that goes into the archive.
+# The zip is extracted on Windows, and a .bat with LF-only endings can misbehave there --
+# branching in particular. Doing it here means the release is correct regardless of how
+# the files happened to be written.
+$textPatterns = @('*.bat', '*.ps1', '*.txt', '*.md')
+$normalised = 0
+foreach ($pattern in $textPatterns) {
+    Get-ChildItem $stage -Recurse -File -Filter $pattern | ForEach-Object {
+        $t = [System.IO.File]::ReadAllText($_.FullName)
+        $fixed = $t.Replace("`r`n", "`n").Replace("`n", "`r`n")
+        if ($fixed -ne $t) {
+            [System.IO.File]::WriteAllText($_.FullName, $fixed, (New-Object System.Text.UTF8Encoding $false))
+        }
+        $normalised++
+    }
+}
+Write-Host "    (normalised line endings in $normalised text file(s))"
+
 # ---------- zip ----------
 Write-Host "`n[4/4] zipping..." -ForegroundColor Cyan
 $zip = Join-Path $dist "NeuroMita.CustomModels-$version.zip"

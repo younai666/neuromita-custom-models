@@ -11,6 +11,8 @@
 
 # PowerShell scripts on Windows are easier to run with CRLF
 *.ps1      text eol=crlf
+*.bat      text eol=crlf
+*.txt      text eol=crlf
 
 # Binary — never touch
 *.dll      binary
