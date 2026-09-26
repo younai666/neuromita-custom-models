@@ -135,8 +135,8 @@ Currently configured through `BepInEx\config\com.neuromita.custommodels.cfg`:
 ```
 ModelPackage.Open(path)
    ├─ UnityFS header      → BundlePackage   (AssetsTools.NET, parses the container itself)
-   ├─ addons_config.txt   → FbxDirPackage   (AssimpNet, config-driven)
-   └─ bare .fbx           → FbxFilePackage  (AssimpNet)
+   ├─ addons_config.txt   → FbxDirPackage   (AssimpNetter, config-driven)
+   └─ bare .fbx           → FbxFilePackage  (AssimpNetter)
 
 WeightRepair.Fix(vertices, weights, bindposes)     ← when the mesh is built
    └─ repair vertices no bone drives, then renormalise
@@ -194,6 +194,7 @@ See [docs/FORMATS.md](docs/FORMATS.md) for the layout of both formats, the `addo
 - [ ] Humanoid retargeting for packs whose bones are *not* named after the game skeleton
       (Mixamo `mixamorig:*`, Source `ValveBiped.*`, VRM `_N_joint_*`)
 - [ ] Per-mod toggle and an in-game picker
+- [x] Lip sync for FBX and AssetBundle packs
 - [ ] BlendShape / facial expression mapping
 - [ ] MagicaCloth2 re-binding for hair and skirt physics
 
@@ -258,7 +259,8 @@ Notes:
   skeleton is a different rig (Mixamo `mixamorig:*`, Source `ValveBiped.*`, VRM `_N_joint_*`) are
   read fine but cannot be driven — the plugin logs
   `incompatible rig: only N of M bones ... share a name`. Retargeting is not implemented.
-- Facial expressions are lost when the game's `FaceLayer` is hidden. That mesh carries the school-uniform collar in addition to the face, so it collides with a replacement model. Nothing maps pack BlendShapes onto the game's expression system yet.
+- Custom head morphs use a CPU fallback because this game's generated IL2CPP `Mesh.AddBlendShapeFrame` bridge throws while marshalling `ReadOnlySpan<T>`. The plugin retains morph channel names and applies speech weights to replacement mesh vertices. Other channels in the same package stay available through the game's `MitaFaceController` blend-shape API.
+- Lip sync was runtime-checked with the `AshleyClassic` AssetBundle on `Mita Crazy` in `CrazyHouse`; the game's voice component bound to the replacement `Head` mesh and resolved its `O` and `A` channels. Face-emotion mapping is not confirmed working: expressions did not visibly affect Ashley in that same test case, so facial expression support remains unfinished.
 - Hair and skirt cloth physics (MagicaCloth2) are not re-bound — expect stiff or misbehaving hair on replacement models.
 - Hand IK targets and item mount points still reference the original bones. They keep working because
   only *meshes* are replaced, never the skeleton — but they follow the original proportions.
@@ -269,7 +271,7 @@ Notes:
 
 | Component | License |
 |---|---|
-| [AssimpNet](https://bitbucket.org/Starnick/assimpnet) | MIT |
+| [AssimpNetter](https://github.com/Saalvage/AssimpNetter) | MIT |
 | [Assimp](https://github.com/assimp/assimp) (native) | BSD-3-Clause |
 | [AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET) | MIT |
 | [BepInEx](https://github.com/BepInEx/BepInEx) | LGPL-2.1 |

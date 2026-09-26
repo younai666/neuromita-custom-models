@@ -9,7 +9,7 @@
         dist\NeuroMita.CustomModels-<version>.zip
         dist\NeuroMita.CustomModels-<version>\            (unpacked staging folder)
 
-    The zip contains everything a user needs: the plugin, AssimpNet, the native assimp library
+    The zip contains everything a user needs: the plugin, AssimpNetter, the native assimp library
     and the docs. Nothing has to be downloaded or compiled by the user.
 #>
 [CmdletBinding()]
@@ -47,7 +47,8 @@ Write-Host "`n[2/4] locating assimp.dll..." -ForegroundColor Cyan
 $assimp = $null
 $candidates = @(
     (Join-Path $bin 'assimp.dll'),
-    (Join-Path $env:USERPROFILE '.nuget\packages\assimpnet\4.1.0\runtimes\win-x64\native\assimp.dll')
+    (Join-Path $bin 'runtimes\win-x64\native\assimp.dll'),
+    (Join-Path $env:USERPROFILE '.nuget\packages\assimpnetter\6.0.5\runtimes\win-x64\native\assimp.dll')
 )
 foreach ($c in $candidates) {
     if (Test-Path $c) { $assimp = $c; break }
@@ -68,7 +69,7 @@ $pluginDir = Join-Path $stage 'BepInEx\plugins'
 New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null
 
 Copy-Item $pluginDll                                  $pluginDir -Force
-Copy-Item (Join-Path $bin 'AssimpNet.dll')            $pluginDir -Force
+Copy-Item (Join-Path $bin 'AssimpNetter.dll')         $pluginDir -Force
 Copy-Item $assimp                                     $pluginDir -Force
 
 # AssetBundle path dependencies (AssetsTools.NET + its texture decoder).
