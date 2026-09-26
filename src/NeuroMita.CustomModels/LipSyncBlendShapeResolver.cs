@@ -67,7 +67,7 @@ namespace NeuroMita.CustomModels
                     string token = normalized.StartsWith("mouth", StringComparison.Ordinal) ? normalized.Substring(5) : normalized.Substring(6);
                     if (MatchesPhoneme(token, mouthA)) return i;
                 }
-                if (normalized.StartsWith("vrcv_", StringComparison.Ordinal) && MatchesPhoneme(normalized.Substring(5), mouthA)) return i;
+                if (normalized.StartsWith("vrcv", StringComparison.Ordinal) && MatchesPhoneme(normalized.Substring(4), mouthA)) return i;
             }
             return -1;
         }

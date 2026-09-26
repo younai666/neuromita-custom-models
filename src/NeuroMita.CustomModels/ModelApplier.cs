@@ -195,7 +195,6 @@ namespace NeuroMita.CustomModels
                 Logging.Verbose($"[Apply] blendShapes source={(part.BlendShapes != null ? part.BlendShapes.Count : 0)} " +
                                 $"frames={CountFrames(part.BlendShapes)} imported={importedBlendShapeFrames}");
                 LogBlendShapes(mesh);
-                LipSyncBinder.TryBind(target, skeletonRoot);
 
                 rep.Ok = true;
                 rep.Bones = count;

@@ -444,7 +444,19 @@ namespace NeuroMita.CustomModels
             return list;
         }
 
+        /// <summary>
+        /// Установка одного пакета целиком.
+        ///
+        /// Липсинк привязывается ОДИН раз — после того как все части поставлены.
+        /// Раньше вызов сидел в ModelApplier.Apply и срабатывал на каждом part,
+        /// из-за чего в многопартовом пакете выбор головы зависел от порядка частей.
+        /// </summary>
         private static void InstallOne(string path, Transform root, string mitaName)
+        {
+            if (InstallOneCore(path, root, mitaName)) LipSyncBinder.BindBest(root);
+        }
+
+        private static bool InstallOneCore(string path, Transform root, string mitaName)
         {
             var fmt = ModelPackage.DetectFormat(path);
             Logging.Info($"[CM] format: {fmt}");
@@ -460,13 +472,13 @@ namespace NeuroMita.CustomModels
                 if (pkg == null)
                 {
                     Logging.Error($"[CM] unsupported package format: {path}");
-                    return;
+                    return false;
                 }
                 if (!pkg.Open())
                 {
                     Logging.Error($"[CM] failed to open: {path}");
                     pkg.Dispose();
-                    return;
+                    return false;
                 }
                 _pkgCache[path] = pkg;
             }
@@ -477,7 +489,7 @@ namespace NeuroMita.CustomModels
 
             {
                 Logging.Info($"[CM] parts: {pkg.Parts.Count}");
-                if (pkg.Parts.Count == 0) return;
+                if (pkg.Parts.Count == 0) return false;
 
                 var dirPkg = pkg as FbxDirPackage;
                 if (dirPkg != null && !string.IsNullOrEmpty(dirPkg.ConfigText))
@@ -493,7 +505,7 @@ namespace NeuroMita.CustomModels
                         var rep = installer.Run(cfg.Buttons[0], mitaName);
                         Logging.Info($"[CM] INSTALL RESULT {rep}");
                         foreach (var err in rep.Errors) Logging.Warn("[CM]   err: " + err);
-                        return;
+                        return rep.Replaced > 0;
                     }
                     Logging.Warn("[CM] config has no button, falling back to single-part replace");
                 }
@@ -528,7 +540,7 @@ namespace NeuroMita.CustomModels
                     if (applied > 0)
                     {
                         Logging.Info($"[CM] auto-slotted {applied}/{pkg.Parts.Count} parts");
-                        return;
+                        return true;
                     }
                     Logging.Warn("[CM] no part matched any slot; falling back to whole-body replace");
                 }
@@ -540,11 +552,11 @@ namespace NeuroMita.CustomModels
                     if (body == null)
                     {
                         Logging.Error($"[CM] no SkinnedMeshRenderer matching fallback '{Plugin.CfgFallbackRenderer.Value}'");
-                        return;
+                        return false;
                     }
 
                     var part = PickWholeBodyPart(pkg);
-                    if (part == null) { Logging.Error("[CM] package has no usable mesh"); return; }
+                    if (part == null) { Logging.Error("[CM] package has no usable mesh"); return false; }
                     Logging.Verbose($"[CM] whole-body part: '{part.Name}' (" +
                                     $"{part.Mesh.vertexCount} verts) of {pkg.Parts.Count} part(s)");
                     Logging.Info($"[CM] applying '{part.Name}' -> '{body.gameObject.name}' (whole-body)");
@@ -560,6 +572,7 @@ namespace NeuroMita.CustomModels
                         int hidden = HideOtherRenderers(root, body, pkg.Parts.Count);
                         Logging.Info($"[CM] whole-body replace: hid {hidden} other renderer(s)");
                     }
+                    return r.Ok;
                 }
             }
         }
