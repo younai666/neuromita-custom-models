@@ -14,6 +14,7 @@ namespace NeuroMita.CustomModels
         public Matrix4x4[] Bindposes;       // 绑定姿势（网格空间 -> 骨骼空间）
         public long SourceMaterialPathId;    // AssetBundle 中原始 SkinnedMeshRenderer 的材质引用
         public string SourceFile;           // 来源文件（FBX 目录包里用于定位同目录贴图）
+        public List<ModelBlendShape> BlendShapes = new List<ModelBlendShape>();
 
         /// <summary>采样"骨骼名 -> 绑定姿势下该骨骼在网格空间的位置"，供自动对齐使用。</summary>
         public AutoAlign.Sample SampleBindposes()
@@ -29,6 +30,22 @@ namespace NeuroMita.CustomModels
             }
             return s;
         }
+    }
+
+    /// <summary>一个与源格式无关的 facial morph channel。</summary>
+    public sealed class ModelBlendShape
+    {
+        public string Name;
+        public readonly List<ModelBlendShapeFrame> Frames = new List<ModelBlendShapeFrame>();
+    }
+
+    /// <summary>单个 Unity BlendShape frame 的稠密 delta данные.</summary>
+    public sealed class ModelBlendShapeFrame
+    {
+        public float Weight = 100f;
+        public Vector3[] DeltaVertices;
+        public Vector3[] DeltaNormals;
+        public Vector3[] DeltaTangents;
     }
 
     /// <summary>

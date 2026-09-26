@@ -61,7 +61,7 @@ NeuroMita.CustomModels.dll
 AssetsTools.NET.dll          <- read the UnityFS container
 AssetsTools.NET.Texture.dll  <- decode its textures
 AssetRipper.TextureDecoder.dll
-AssimpNet.dll                <- read FBX packs
+AssimpNetter.dll             <- read FBX packs
 assimp.dll                   <- native library for AssimpNet
 ```
 
@@ -80,8 +80,8 @@ paths sort themselves out.
 `assimp.dll` is missing. It belongs in `BepInEx\plugins\`, next to `NeuroMita.CustomModels.dll`.
 
 It ships in this project's release zip — extracting the zip into the game folder puts it in the right
-place. If you are building from source, it comes from the AssimpNet NuGet package at
-`~/.nuget/packages/assimpnet/4.1.0/runtimes/win-x64/native/assimp.dll`.
+place. If you are building from source, it comes from the AssimpNetter NuGet package at
+`~/.nuget/packages/assimpnetter/6.0.5/runtimes/win-x64/native/assimp.dll`.
 
 Without it, **no FBX pack can be read** — this is not optional. AssetBundle packs are unaffected.
 

@@ -36,7 +36,7 @@ namespace NeuroMita.CustomModels
                 _nativeAvailable = false;
                 Logging.Error(
                     "[Pkg] native assimp library not found - FBX packs cannot be read. " +
-                    "Copy assimp.dll from the AssimpNet NuGet package " +
+                    "Copy assimp.dll from the AssimpNetter NuGet package " +
                     "(runtimes/win-x64/native/assimp.dll) into BepInEx\\plugins\\ " +
                     "next to NeuroMita.CustomModels.dll. Detail: " + e.Message);
             }
@@ -84,7 +84,7 @@ namespace NeuroMita.CustomModels
             {
                 // 最常见的一类安装问题，单独给出可执行的指引
                 Logging.Error("[Pkg] the native assimp library is missing, so FBX packs cannot be read. " +
-                              "Put assimp.dll (from the AssimpNet NuGet package, runtimes/win-x64/native/) " +
+                              "Put assimp.dll (from the AssimpNetter NuGet package, runtimes/win-x64/native/) " +
                               "next to NeuroMita.CustomModels.dll inside BepInEx\\plugins\\. " +
                               "Detail: " + e.Message);
                 return false;
@@ -112,16 +112,29 @@ namespace NeuroMita.CustomModels
             }
             mesh.vertices = verts;
 
+            Vector3[] baseNormals = null;
             if (am.HasNormals)
             {
-                var normals = new Vector3[vc];
+                baseNormals = new Vector3[vc];
                 for (int i = 0; i < vc; i++)
                 {
                     var n = am.Normals[i];
-                    normals[i] = new Vector3(n.X, n.Y, n.Z);
+                    baseNormals[i] = new Vector3(n.X, n.Y, n.Z);
                 }
-                mesh.normals = normals;
+                mesh.normals = baseNormals;
             }
+
+            Vector3[] baseTangents = null;
+            if (am.HasTangentBasis)
+            {
+                baseTangents = new Vector3[vc];
+                for (int i = 0; i < vc; i++)
+                {
+                    var t = am.Tangents[i];
+                    baseTangents[i] = new Vector3(t.X, t.Y, t.Z);
+                }
+            }
+            var blendShapes = ImportBlendShapes(am, verts, baseNormals, baseTangents);
 
             if (am.HasTextureCoords(0))
             {
@@ -200,9 +213,10 @@ namespace NeuroMita.CustomModels
             mesh.bindposes = bindposes;
             mesh.RecalculateBounds();
 
-            // 统计 BlendShape：决定替换后的模型能不能有表情
-            int shapeKeys = 0;
-            try { shapeKeys = am.MeshAnimationAttachmentCount; } catch { }
+            int sourceMorphs = 0;
+            try { sourceMorphs = am.MeshAnimationAttachmentCount; } catch { }
+            var importedNames = new List<string>();
+            foreach (var shape in blendShapes) importedNames.Add(shape.Name);
             try
             {
                 var mi = am.MaterialIndex;
@@ -210,32 +224,120 @@ namespace NeuroMita.CustomModels
                 {
                     var am2 = scene.Materials[mi];
                     Logging.Verbose($"[Pkg]   part '{am.Name}' verts={vc} bones={boneNames.Count} " +
-                                 $"blendShapes={shapeKeys} material='{am2.Name}'");
+                                 $"sourceMorphs={sourceMorphs} importedBlendShapes={blendShapes.Count} " +
+                                 $"material='{am2.Name}'");
                 }
                 else
                 {
-                    Logging.Verbose($"[Pkg]   part '{am.Name}' verts={vc} bones={boneNames.Count} blendShapes={shapeKeys}");
+                    Logging.Verbose($"[Pkg]   part '{am.Name}' verts={vc} bones={boneNames.Count} " +
+                                 $"sourceMorphs={sourceMorphs} importedBlendShapes={blendShapes.Count}");
                 }
             }
             catch { }
+            if (importedNames.Count > 0)
+                Logging.Verbose($"[Pkg]   {am.Name} blendshapes: {string.Join(", ", importedNames)}");
 
             return new ModelPart
             {
                 Name = am.Name ?? "mesh",
                 Mesh = mesh,
+                BlendShapes = blendShapes,
                 BoneNames = boneNames.ToArray(),
                 Bindposes = bindposes,
             };
         }
 
+        private static List<ModelBlendShape> ImportBlendShapes(Assimp.Mesh source, Vector3[] baseVertices,
+            Vector3[] baseNormals, Vector3[] baseTangents)
+        {
+            var result = new List<ModelBlendShape>();
+            if (source == null || baseVertices == null || baseVertices.Length == 0) return result;
+
+            var attachments = source.MeshAnimationAttachments;
+            if (attachments == null) return result;
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int index = 0; index < attachments.Count; index++)
+            {
+                var attachment = attachments[index];
+                string name = ReadAttachmentName(attachment);
+                bool nameMissing = string.IsNullOrWhiteSpace(name);
+                    if (nameMissing) name = $"{source.Name ?? "mesh"}_BlendShape_{index + 1}";
+                string uniqueName = name;
+                int suffix = 2;
+                while (!usedNames.Add(uniqueName)) uniqueName = $"{name}_{suffix++}";
+
+                try
+                {
+                    if (attachment == null || !attachment.HasVertices || attachment.Vertices == null ||
+                        attachment.Vertices.Count != baseVertices.Length)
+                        throw new InvalidDataException("morph vertex count does not match base mesh");
+
+                    var dv = new Vector3[baseVertices.Length];
+                    var dn = new Vector3[baseVertices.Length];
+                    var dt = new Vector3[baseVertices.Length];
+                    for (int vertex = 0; vertex < baseVertices.Length; vertex++)
+                    {
+                        var p = attachment.Vertices[vertex];
+                        dv[vertex] = new Vector3(p.X - baseVertices[vertex].x,
+                            p.Y - baseVertices[vertex].y, p.Z - baseVertices[vertex].z);
+
+                        if (attachment.HasNormals && attachment.Normals != null && attachment.Normals.Count == baseVertices.Length)
+                        {
+                            var n = attachment.Normals[vertex];
+                            var baseNormal = baseNormals != null ? baseNormals[vertex] : Vector3.zero;
+                            dn[vertex] = new Vector3(n.X - baseNormal.x, n.Y - baseNormal.y, n.Z - baseNormal.z);
+                        }
+                        if (attachment.HasTangentBasis && attachment.Tangents != null && attachment.Tangents.Count == baseVertices.Length)
+                        {
+                            var t = attachment.Tangents[vertex];
+                            var baseTangent = baseTangents != null ? baseTangents[vertex] : Vector3.zero;
+                            dt[vertex] = new Vector3(t.X - baseTangent.x, t.Y - baseTangent.y, t.Z - baseTangent.z);
+                        }
+
+                        if (!IsFinite(dv[vertex]) || !IsFinite(dn[vertex]) || !IsFinite(dt[vertex]))
+                            throw new InvalidDataException($"non-finite data at vertex {vertex}");
+                    }
+
+                    var shape = new ModelBlendShape { Name = uniqueName };
+                    shape.Frames.Add(new ModelBlendShapeFrame
+                    {
+                        Weight = 100f,
+                        DeltaVertices = dv,
+                        DeltaNormals = dn,
+                        DeltaTangents = dt
+                    });
+                    result.Add(shape);
+                    if (nameMissing)
+                        Logging.Warn($"[Pkg] BlendShape #{index + 1} on '{source.Name}' has no name in the AssimpNetter data; " +
+                                     $"using '{uniqueName}'. Check the installed AssimpNetter package version.");
+                }
+                catch (Exception e)
+                {
+                    Logging.Warn($"[Pkg] BlendShape '{uniqueName}' skipped: {e.Message}");
+                }
+            }
+            return result;
+        }
+
+        private static string ReadAttachmentName(Assimp.MeshAnimationAttachment attachment)
+        {
+            return attachment != null ? attachment.Name : null;
+        }
+
+        private static bool IsFinite(Vector3 value) =>
+            !float.IsNaN(value.x) && !float.IsInfinity(value.x) &&
+            !float.IsNaN(value.y) && !float.IsInfinity(value.y) &&
+            !float.IsNaN(value.z) && !float.IsInfinity(value.z);
+
         /// <summary>Assimp 行主序矩阵 -> Unity 列主序矩阵。</summary>
-        protected static Matrix4x4 ToUnity(Assimp.Matrix4x4 m)
+        protected static Matrix4x4 ToUnity(System.Numerics.Matrix4x4 m)
         {
             var r = new Matrix4x4();
-            r.m00 = m.A1; r.m01 = m.A2; r.m02 = m.A3; r.m03 = m.A4;
-            r.m10 = m.B1; r.m11 = m.B2; r.m12 = m.B3; r.m13 = m.B4;
-            r.m20 = m.C1; r.m21 = m.C2; r.m22 = m.C3; r.m23 = m.C4;
-            r.m30 = m.D1; r.m31 = m.D2; r.m32 = m.D3; r.m33 = m.D4;
+            r.m00 = m.M11; r.m01 = m.M12; r.m02 = m.M13; r.m03 = m.M14;
+            r.m10 = m.M21; r.m11 = m.M22; r.m12 = m.M23; r.m13 = m.M24;
+            r.m20 = m.M31; r.m21 = m.M32; r.m22 = m.M33; r.m23 = m.M34;
+            r.m30 = m.M41; r.m31 = m.M42; r.m32 = m.M43; r.m33 = m.M44;
             return r;
         }
     }

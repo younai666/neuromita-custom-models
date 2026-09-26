@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace NeuroMita.CustomModels
@@ -115,6 +116,7 @@ namespace NeuroMita.CustomModels
                 mesh.name = (part.Mesh.name ?? "mesh") + "_aligned";
                 var swTr = System.Diagnostics.Stopwatch.StartNew();
                 TransformMesh(mesh, align.Fix);
+                int importedBlendShapeFrames = ApplyBlendShapes(mesh, part.BlendShapes, align.Fix);
                 msTransform = swTr.ElapsedMilliseconds;
 
                 // ---- 3) 目标骨架的 bindpose 表（按骨骼名）----
@@ -190,6 +192,10 @@ namespace NeuroMita.CustomModels
                 target.bones = bones;
                 if (bones.Length > 0 && bones[0] != null) target.rootBone = skeletonRoot;
                 target.updateWhenOffscreen = true;
+                Logging.Verbose($"[Apply] blendShapes source={(part.BlendShapes != null ? part.BlendShapes.Count : 0)} " +
+                                $"frames={CountFrames(part.BlendShapes)} imported={importedBlendShapeFrames}");
+                LogBlendShapes(mesh);
+                LipSyncBinder.TryBind(target, skeletonRoot);
 
                 rep.Ok = true;
                 rep.Bones = count;
@@ -241,6 +247,76 @@ namespace NeuroMita.CustomModels
             }
 
             mesh.RecalculateBounds();
+        }
+
+        private static int ApplyBlendShapes(Mesh mesh, IList<ModelBlendShape> blendShapes, Matrix4x4 fix)
+        {
+            int imported = 0;
+            if (mesh == null || blendShapes == null) return imported;
+            foreach (var shape in blendShapes)
+            {
+                if (shape == null || string.IsNullOrWhiteSpace(shape.Name) || shape.Frames == null) continue;
+                var orderedFrames = new List<ModelBlendShapeFrame>(shape.Frames);
+                orderedFrames.Sort((a, b) => a.Weight.CompareTo(b.Weight));
+                float? previousWeight = null;
+                foreach (var frame in orderedFrames)
+                {
+                    try
+                    {
+                        if (frame == null || frame.DeltaVertices == null || frame.DeltaNormals == null || frame.DeltaTangents == null ||
+                            frame.DeltaVertices.Length != mesh.vertexCount || frame.DeltaNormals.Length != mesh.vertexCount ||
+                            frame.DeltaTangents.Length != mesh.vertexCount)
+                            throw new InvalidDataException("delta array length does not match base mesh");
+                        if (!IsFinite(frame.Weight)) throw new InvalidDataException("frame weight is not finite");
+                        if (previousWeight.HasValue && Mathf.Abs(previousWeight.Value - frame.Weight) < 0.0001f)
+                            throw new InvalidDataException($"duplicate frame weight {frame.Weight}");
+
+                        var deltaVertices = TransformDeltas(frame.DeltaVertices, fix);
+                        var deltaNormals = TransformDeltas(frame.DeltaNormals, fix);
+                        var deltaTangents = TransformDeltas(frame.DeltaTangents, fix);
+                        mesh.AddBlendShapeFrame(shape.Name, frame.Weight, deltaVertices, deltaNormals, deltaTangents);
+                        previousWeight = frame.Weight;
+                        imported++;
+                    }
+                    catch (Exception e)
+                    {
+                        Logging.Warn($"[Apply] BlendShape '{shape.Name}' frame skipped: {e.Message}");
+                    }
+                }
+            }
+            return imported;
+        }
+
+        private static Vector3[] TransformDeltas(Vector3[] source, Matrix4x4 fix)
+        {
+            var transformed = new Vector3[source.Length];
+            for (int i = 0; i < source.Length; i++)
+            {
+                if (!IsFinite(source[i])) throw new InvalidDataException($"non-finite delta at vertex {i}");
+                transformed[i] = fix.MultiplyVector(source[i]);
+            }
+            return transformed;
+        }
+
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
+        private static bool IsFinite(Vector3 value) =>
+            IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+
+        private static int CountFrames(IList<ModelBlendShape> shapes)
+        {
+            if (shapes == null) return 0;
+            int result = 0;
+            foreach (var shape in shapes) if (shape != null && shape.Frames != null) result += shape.Frames.Count;
+            return result;
+        }
+
+        private static void LogBlendShapes(Mesh mesh)
+        {
+            if (!Logging.VerboseEnabled || mesh == null) return;
+            Logging.Verbose($"[Apply] mesh={mesh.name} vertexCount={mesh.vertexCount} blendShapeCount={mesh.blendShapeCount}");
+            for (int i = 0; i < mesh.blendShapeCount; i++)
+                Logging.Verbose($"[Apply]   blendshape[{i}] {mesh.GetBlendShapeName(i)}");
         }
 
         /// <summary>

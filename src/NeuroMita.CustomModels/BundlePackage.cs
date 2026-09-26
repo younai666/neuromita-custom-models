@@ -764,6 +764,8 @@ namespace NeuroMita.CustomModels
             if (tris != null && tris.Length > 0) mesh.triangles = tris;
             mesh.RecalculateBounds();
 
+            var blendShapes = ReadBlendShapes(mf, name, vcount);
+
             Logging.Verbose(string.Format(
                 "[Bundle] {0}: verts={1} tris={2} bones={3} bounds={4}",
                 name, verts.Length, tris == null ? 0 : tris.Length, boneNames.Length, mesh.bounds));
@@ -772,6 +774,7 @@ namespace NeuroMita.CustomModels
             {
                 Name = name,
                 Mesh = mesh,
+                BlendShapes = blendShapes,
                 BoneNames = boneNames,
                 Bindposes = bindposes,
                 SourceMaterialPathId = smr != null && ElemList(F(smr, "m_Materials")).Count > 0
@@ -779,6 +782,205 @@ namespace NeuroMita.CustomModels
                 SourceFile = RootPath
             };
         }
+
+        private sealed class SerializedBlendVertex
+        {
+            public int Index;
+            public Vector3 DeltaVertex;
+            public Vector3 DeltaNormal;
+            public Vector3 DeltaTangent;
+        }
+
+        private sealed class SerializedBlendFrame
+        {
+            public int FirstVertex;
+            public int VertexCount;
+            public bool HasNormals;
+            public bool HasTangents;
+        }
+
+        private sealed class SerializedBlendChannel
+        {
+            public string Name;
+            public int FrameIndex;
+            public int FrameCount;
+        }
+
+        private static List<ModelBlendShape> ReadBlendShapes(AssetTypeValueField meshField, string meshName, int vertexCount)
+        {
+            var result = new List<ModelBlendShape>();
+            var root = F(meshField, "m_Shapes");
+            if (root == null) return result;
+
+            var verticesField = F(root, "vertices");
+            var shapesField = F(root, "shapes");
+            var channelsField = F(root, "channels");
+            var weightsField = F(root, "fullWeights");
+            if (verticesField == null || shapesField == null || channelsField == null)
+            {
+                var missing = new List<string>();
+                if (verticesField == null) missing.Add("vertices");
+                if (shapesField == null) missing.Add("shapes");
+                if (channelsField == null) missing.Add("channels");
+                Logging.Warn($"[Bundle] {meshName}: m_Shapes present but expected field(s) missing: {string.Join(", ", missing)}");
+                return result;
+            }
+
+            var serializedVertices = new List<SerializedBlendVertex>();
+            var entries = ElemList(verticesField);
+            int invalidVertices = 0;
+            foreach (var entry in entries)
+            {
+                int index = I(entry, "index");
+                if (index < 0 || index >= vertexCount)
+                {
+                    invalidVertices++;
+                    serializedVertices.Add(null);
+                    continue;
+                }
+                serializedVertices.Add(new SerializedBlendVertex
+                {
+                    Index = index,
+                    DeltaVertex = ReadVector3(F(entry, "vertex")),
+                    DeltaNormal = ReadVector3(F(entry, "normal")),
+                    DeltaTangent = ReadVector3(F(entry, "tangent"))
+                });
+            }
+            if (invalidVertices > 0)
+                Logging.Warn($"[Bundle] {meshName}: skipped {invalidVertices} blend vertex records with invalid indices");
+
+            var serializedFrames = new List<SerializedBlendFrame>();
+            foreach (var entry in ElemList(shapesField))
+                serializedFrames.Add(new SerializedBlendFrame
+                {
+                    FirstVertex = I(entry, "firstVertex"),
+                    VertexCount = I(entry, "vertexCount"),
+                    HasNormals = B(entry, "hasNormals"),
+                    HasTangents = B(entry, "hasTangents")
+                });
+
+            var fullWeights = ReadFloatList(weightsField);
+            var channels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int importedFrames = 0;
+            foreach (var entry in ElemList(channelsField))
+            {
+                string channelName = S(entry, "name");
+                int frameIndex = I(entry, "frameIndex");
+                int frameCount = I(entry, "frameCount");
+                if (string.IsNullOrWhiteSpace(channelName)) channelName = $"{meshName}_BlendShape_{result.Count + 1}";
+                string uniqueName = channelName;
+                int suffix = 2;
+                while (!channels.Add(uniqueName)) uniqueName = $"{channelName}_{suffix++}";
+                if (frameIndex < 0 || frameCount <= 0 || frameIndex > serializedFrames.Count - frameCount)
+                {
+                    Logging.Warn($"[Bundle] BlendShape '{uniqueName}' skipped: invalid frame range {frameIndex}+{frameCount}");
+                    continue;
+                }
+
+                var shape = new ModelBlendShape { Name = uniqueName };
+                for (int localFrame = 0; localFrame < frameCount; localFrame++)
+                {
+                    int frameId = frameIndex + localFrame;
+                    var sourceFrame = serializedFrames[frameId];
+                    if (sourceFrame.FirstVertex < 0 || sourceFrame.VertexCount <= 0 ||
+                        sourceFrame.FirstVertex > serializedVertices.Count - sourceFrame.VertexCount)
+                    {
+                        Logging.Warn($"[Bundle] BlendShape '{uniqueName}' frame {frameId} skipped: invalid vertex range");
+                        continue;
+                    }
+
+                    var deltaVertices = new Vector3[vertexCount];
+                    var deltaNormals = new Vector3[vertexCount];
+                    var deltaTangents = new Vector3[vertexCount];
+                    for (int j = sourceFrame.FirstVertex; j < sourceFrame.FirstVertex + sourceFrame.VertexCount; j++)
+                    {
+                        var sourceVertex = serializedVertices[j];
+                        if (sourceVertex == null) continue;
+                        if (!IsFinite(sourceVertex.DeltaVertex) || !IsFinite(sourceVertex.DeltaNormal) ||
+                            !IsFinite(sourceVertex.DeltaTangent))
+                        {
+                            Logging.Warn($"[Bundle] BlendShape '{uniqueName}' frame {frameId} skipped: non-finite delta at vertex {sourceVertex.Index}");
+                            deltaVertices = null;
+                            break;
+                        }
+                        int target = sourceVertex.Index;
+                        deltaVertices[target] = sourceVertex.DeltaVertex;
+                        if (sourceFrame.HasNormals) deltaNormals[target] = sourceVertex.DeltaNormal;
+                        if (sourceFrame.HasTangents) deltaTangents[target] = sourceVertex.DeltaTangent;
+                    }
+                    if (deltaVertices == null) continue;
+
+                    float weight = 100f;
+                    if (frameId >= 0 && frameId < fullWeights.Count) weight = fullWeights[frameId];
+                    else Logging.Verbose($"[Bundle] BlendShape '{uniqueName}' frame {frameId}: fullWeights missing, using 100");
+                    if (!IsFinite(weight))
+                    {
+                        Logging.Warn($"[Bundle] BlendShape '{uniqueName}' frame {frameId} skipped: non-finite weight");
+                        continue;
+                    }
+                    shape.Frames.Add(new ModelBlendShapeFrame
+                    {
+                        Weight = weight,
+                        DeltaVertices = deltaVertices,
+                        DeltaNormals = deltaNormals,
+                        DeltaTangents = deltaTangents
+                    });
+                    importedFrames++;
+                    Logging.Verbose($"[Bundle] BlendShape '{uniqueName}': frameWeight={weight} affectedVertices={sourceFrame.VertexCount} " +
+                                    $"normals={(sourceFrame.HasNormals ? "yes" : "no")} tangents={(sourceFrame.HasTangents ? "yes" : "no")}");
+                }
+                shape.Frames.Sort((a, b) => a.Weight.CompareTo(b.Weight));
+                if (shape.Frames.Count > 0) result.Add(shape);
+            }
+
+            Logging.Verbose($"[Bundle] {meshName}: verts={vertexCount} blendVertices={entries.Count} " +
+                            $"blendFrames={importedFrames} blendChannels={ElemList(channelsField).Count}");
+            return result;
+        }
+
+        private static List<float> ReadFloatList(AssetTypeValueField vectorField)
+        {
+            var result = new List<float>();
+            var array = F(vectorField, "Array");
+            if (array == null) return result;
+            if (array.Children != null)
+            {
+                foreach (var element in array.Children)
+                {
+                    try { result.Add(element.AsFloat); }
+                    catch { result.Add(float.NaN); }
+                }
+            }
+            return result;
+        }
+
+        private static bool B(AssetTypeValueField parent, string name)
+        {
+            var field = F(parent, name);
+            try { return field != null && field.AsBool; }
+            catch
+            {
+                try { return field != null && field.AsInt != 0; }
+                catch { return false; }
+            }
+        }
+
+        private static Vector3 ReadVector3(AssetTypeValueField field)
+        {
+            if (field == null) return Vector3.zero;
+            return new Vector3(ReadFloat(field, "x"), ReadFloat(field, "y"), ReadFloat(field, "z"));
+        }
+
+        private static float ReadFloat(AssetTypeValueField parent, string name)
+        {
+            var field = F(parent, name);
+            try { return field == null ? float.NaN : field.AsFloat; }
+            catch { return float.NaN; }
+        }
+
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
+        private static bool IsFinite(Vector3 value) => IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
 
         private static float R(byte[] b, int o, int fmt)
         {

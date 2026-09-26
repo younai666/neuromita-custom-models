@@ -135,8 +135,8 @@ Currently configured through `BepInEx\config\com.neuromita.custommodels.cfg`:
 ```
 ModelPackage.Open(path)
    ├─ UnityFS header      → BundlePackage   (AssetsTools.NET, parses the container itself)
-   ├─ addons_config.txt   → FbxDirPackage   (AssimpNet, config-driven)
-   └─ bare .fbx           → FbxFilePackage  (AssimpNet)
+   ├─ addons_config.txt   → FbxDirPackage   (AssimpNetter, config-driven)
+   └─ bare .fbx           → FbxFilePackage  (AssimpNetter)
 
 WeightRepair.Fix(vertices, weights, bindposes)     ← when the mesh is built
    └─ repair vertices no bone drives, then renormalise
@@ -269,7 +269,7 @@ Notes:
 
 | Component | License |
 |---|---|
-| [AssimpNet](https://bitbucket.org/Starnick/assimpnet) | MIT |
+| [AssimpNetter](https://github.com/Saalvage/AssimpNetter) | MIT |
 | [Assimp](https://github.com/assimp/assimp) (native) | BSD-3-Clause |
 | [AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET) | MIT |
 | [BepInEx](https://github.com/BepInEx/BepInEx) | LGPL-2.1 |

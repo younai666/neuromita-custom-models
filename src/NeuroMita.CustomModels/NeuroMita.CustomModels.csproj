@@ -9,7 +9,7 @@
     <Nullable>disable</Nullable>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <!-- 类库默认不把 NuGet 依赖复制到输出目录，但插件必须把 AssimpNet.dll 一起分发 -->
+    <!-- 类库默认不把 NuGet 依赖复制到输出目录，但插件必须把 AssimpNetter.dll 一起分发 -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -79,9 +79,8 @@
       <HintPath>$(InteropDir)\UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-
     <!-- FBX 路线：网格解析 -->
-    <PackageReference Include="AssimpNet" Version="4.1.0" />
+    <PackageReference Include="AssimpNetter" Version="6.0.5" />
     <!-- AssetBundle 路线：UnityFS 容器 + 序列化字段解析（MIT） -->
     <PackageReference Include="AssetsTools.NET" Version="3.0.5" />
     <!-- AssetBundle 路线：贴图字段解析（MIT） -->
