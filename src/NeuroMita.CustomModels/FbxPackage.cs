@@ -145,7 +145,7 @@ namespace NeuroMita.CustomModels
                 mesh.uv = uvs;
             }
 
-            mesh.triangles = am.GetIndices();
+            mesh.triangles = new List<int>(am.GetIndices()).ToArray();
 
             // 骨骼名 + 绑定姿势（保持 FBX 空间）
             var boneNames = new List<string>();

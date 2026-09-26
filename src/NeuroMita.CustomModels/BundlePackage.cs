@@ -799,13 +799,6 @@ namespace NeuroMita.CustomModels
             public bool HasTangents;
         }
 
-        private sealed class SerializedBlendChannel
-        {
-            public string Name;
-            public int FrameIndex;
-            public int FrameCount;
-        }
-
         private static List<ModelBlendShape> ReadBlendShapes(AssetTypeValueField meshField, string meshName, int vertexCount)
         {
             var result = new List<ModelBlendShape>();
