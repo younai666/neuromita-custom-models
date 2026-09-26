@@ -594,14 +594,8 @@ namespace NeuroMita.CustomModels
             try
             {
                 var low = (partName ?? "").ToLowerInvariant();
-                string preferred = low.Contains("hair") ? "hair"
-                                 : low.Contains("head") || low.Contains("face") || low.Contains("attribute") ? "face"
-                                 : low.Contains("sweater") || low.Contains("skirt") || low.Contains("cloth") ? "cloth"
-                                 : low.Contains("body") || low.Contains("pant") || low.Contains("shoe") ? "body"
-                                 : low.Contains("outline") ? "outline" : null;
-                if (preferred != null)
-                    foreach (var kv in bp.Textures)
-                        if (kv.Key.Equals(preferred, StringComparison.OrdinalIgnoreCase)) return kv.Value;
+                // 贴图名猜测表已移除：那是为单个模型（Ashley）的贴图命名写的。
+                // 权威来源是材质引用（BundlePackage.GetSourceTexture），名字匹配只作兜底。
                 foreach (var kv in bp.Textures)
                 {
                     var n = kv.Key.ToLowerInvariant();
@@ -650,19 +644,9 @@ namespace NeuroMita.CustomModels
 
                 string key = null;
                 var low = (partName ?? "").ToLowerInvariant();
-                string preferred = low == "hair" ? "hairs"
-                                 : low == "head" ? "head"
-                                 : low == "face" ? "facelayer"
-                                 : low == "sweater" ? "sweaterslot"
-                                 : low == "body" ? "bodyslot"
-                                 : low == "pantyhose" ? "pantyhoseSlot"
-                                 : low == "skirt" ? "skirtslot"
-                                 : low == "shoes" ? "shoesslot"
-                                 : low == "attribute" ? "attributeslot" : null;
-                if (preferred != null)
-                    foreach (var s in smrs)
-                        if (s != null && !usedSlots.Contains(s.GetInstanceID()) &&
-                            string.Equals(s.gameObject.name, preferred, StringComparison.OrdinalIgnoreCase)) return s;
+                // 精确槽位名表已移除：其中大部分名字（sweaterslot / skirtslot / shoesslot /
+                // attributeslot）在实测日志里从未出现过，属于猜测。下面的模糊匹配本就覆盖
+                // 这些情况，而且不依赖硬编码的游戏内部命名。
                 if (low.Contains("hair")) key = "hair";
                 else if (low.Contains("head") || low.Contains("face")) key = "head";
                 else if (low.Contains("arm") || low.Contains("hand") || low.Contains("glove")) key = "arm";

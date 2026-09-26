@@ -27,6 +27,26 @@ namespace NeuroMita.CustomModels
                 $"align=[{AlignTriad}] residual={AlignResidual:F4} {Message}";
         }
 
+        /// <summary>
+        /// 拟合残差相对模型尺寸的容忍上限。
+        /// 实测：原生骨架包 0.0000~0.0014，非原生包 0.155 —— 0.02 两边都有 14 倍余量。
+        /// </summary>
+        private const float MaxRelativeResidual = 0.02f;
+
+        /// <summary>模型绑定姿势的包围盒对角线长度，作为"尺寸"基准（与角色比例无关）。</summary>
+        private static float ModelScale(AutoAlign.Sample s)
+        {
+            if (s == null || s.Pos == null || s.Pos.Count == 0) return 0f;
+            var min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            foreach (var kv in s.Pos)
+            {
+                var p = kv.Value;
+                if (p.x < min.x) min.x = p.x; if (p.y < min.y) min.y = p.y; if (p.z < min.z) min.z = p.z;
+                if (p.x > max.x) max.x = p.x; if (p.y > max.y) max.y = p.y; if (p.z > max.z) max.z = p.z;
+            }
+            return (max - min).magnitude;
+        }
         public static Report Apply(SkinnedMeshRenderer target, ModelPart part, Transform skeletonRoot)
         {
             var rep = new Report { Part = part != null ? part.Name : "null" };
@@ -57,6 +77,30 @@ namespace NeuroMita.CustomModels
                     return rep;
                 }
                 Logging.Verbose($"[Apply] align: {align.Message}");
+
+                // ---- 1b) 拟合残差门槛：骨架是不是真的对得上 ----
+                //
+                // 一个包只要有 3 根骨骼名字撞上游戏骨架，就会被当成"兼容"而放行；
+                // 但名字撞上不等于骨架相同。若这个包的静息姿势/比例和游戏骨架不一样，
+                // 任何刚体拟合都消不掉误差，顶点就只能被"大概放过去" —— 结果是模型
+                // 装上了、姿势却是坏的，比干净地拒绝更糟。
+                //
+                // 用残差相对【模型自身尺寸】的比值判定，实测分离度极大：
+                //   原生骨架包（Master Chief / CJ / Gothic）: 0.0000 ~ 0.0014
+                //   非原生包（Dio，只有 60/148 骨骼匹配）  : 0.155
+                float modelScale = ModelScale(modelSample);
+                float relResidual = modelScale > 1e-6f ? align.Residual / modelScale : 0f;
+                if (relResidual > MaxRelativeResidual)
+                {
+                    rep.Message = $"align fit too poor: avg error {align.Residual:F4} is " +
+                                  $"{relResidual * 100f:F1}% of the model size (limit {MaxRelativeResidual * 100f:F0}%). " +
+                                  "This pack's rest pose does not match the game skeleton — it was most likely " +
+                                  "built on a different rig, so replacing with it would deform the model.";
+                    Logging.Warn($"[Apply] REJECTED '{part.Name}': {rep.Message}");
+                    return rep;
+                }
+                Logging.Verbose($"[Apply] fit: residual={align.Residual:F4} scale={modelScale:F3} " +
+                                $"relative={relResidual * 100f:F2}%");
 
                 // ---- 2) 复制网格并把顶点搬到目标空间 ----
                 Mesh mesh = null;
@@ -172,7 +216,6 @@ namespace NeuroMita.CustomModels
             foreach (var candidate in targetBp.Keys)
             {
                 if (!skeletonByName.ContainsKey(candidate) || !modelSample.Pos.TryGetValue(candidate, out var other)) continue;
-                if (!IsValidRemap(name, candidate)) continue;
                 other = modelToTarget.MultiplyPoint3x4(other);
                 float distance = (pos - other).sqrMagnitude;
                 if (distance < bestDistance) { bestDistance = distance; best = candidate; }
@@ -180,22 +223,6 @@ namespace NeuroMita.CustomModels
             return best;
         }
 
-        private static bool IsValidRemap(string source, string candidate)
-        {
-            if (source.StartsWith("Ahoge", StringComparison.Ordinal) ||
-                source.StartsWith("BangHair", StringComparison.Ordinal) ||
-                source.StartsWith("HairSide", StringComparison.Ordinal))
-                return candidate.IndexOf("hair", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       string.Equals(candidate, "Head", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(candidate, "Neck", StringComparison.OrdinalIgnoreCase);
-
-            if (source.StartsWith("Butt", StringComparison.Ordinal))
-                return candidate.IndexOf("hips", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       candidate.IndexOf("pelvis", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       candidate.IndexOf("skirt", StringComparison.OrdinalIgnoreCase) >= 0;
-
-            return true;
-        }
 
         private static void TransformMesh(Mesh mesh, Matrix4x4 fix)
         {
