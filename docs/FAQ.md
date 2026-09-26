@@ -14,32 +14,76 @@ Check the log at `BepInEx\LogOutput.log` first — the plugin reports what it is
 If you see `0 plugins to load`, the plugin DLL is not in `BepInEx\plugins\`, or BepInEx itself is
 not installed correctly.
 
-**2. Are you in a scene with a character?** The plugin does nothing on the main menu. It logs:
+**2. Are you in a scene with a character?** The plugin does nothing on the main menu, and while it
+is waiting it says so once per character:
 
 ```
-[CM] waiting for a character whose Avatar name contains 'Crazy'
+[CM] 'Crazy': character not in this scene yet (1 pack(s) waiting)
+[CM]   waiting; scene has: Scene/Mita Hands/Body (active=True)
 ```
 
-Enter a house (main menu → `米塔选择` → any Mita). You should then see `[CM] target: ...`.
-
-**3. Are packs being found?**
+Enter a house (main menu → `米塔选择` → any Mita). You should then see the character being picked up:
 
 ```
+[CM] ===== character 'Crazy' -> 'Mita Crazy' (1 pack(s)) =====
+```
+
+**3. Are packs being found?** Two layouts exist, and each reports differently.
+
+With **character folders** (`CustomModels\Crazy\…`) the plugin scans per character; an empty result
+looks like the waiting message above.
+
+With the **flat layout** it lists what it found:
+
+```
+[CM] pack dir: D:\Games\NeuroMita\CustomModels
 [CM] packs found: 0 []
+[CM] no model packs found; nothing to do
 ```
 
-means `PackDirectory` is empty or does not exist. See [Installation](INSTALL.md) step 3.
+`0 []` means the folder is empty, and
+
+```
+[CM] pack directory does not exist: D:\Games\NeuroMita\CustomModels
+```
+
+means `PackDirectory` points somewhere wrong. See [Installation](INSTALL.md#adding-model-packs).
+
+---
+
+## AssetBundle packs (`.vrmmod`) do nothing, but FBX packs work
+
+Almost always a missing dependency. The plugin ships **six** DLLs and all of them belong in
+`BepInEx\plugins\`:
+
+```
+NeuroMita.CustomModels.dll
+AssetsTools.NET.dll          <- read the UnityFS container
+AssetsTools.NET.Texture.dll  <- decode its textures
+AssetRipper.TextureDecoder.dll
+AssimpNet.dll                <- read FBX packs
+assimp.dll                   <- native library for AssimpNet
+```
+
+If `AssetsTools.NET.dll` (or one of the other two AssetsTools files) is missing, the AssetBundle
+path cannot load at all, so `.vrmmod` packs fail while FBX packs keep working — which makes it look
+like the packs themselves are at fault.
+
+This is the failure mode of following an older guide: earlier releases shipped only the last three
+files. **Extract the release zip into the game folder** instead of copying files by hand, and the
+paths sort themselves out.
 
 ---
 
 ## "native assimp library not found"
 
-`assimp.dll` is missing. Copy it into `BepInEx\plugins\` next to `NeuroMita.CustomModels.dll`.
+`assimp.dll` is missing. It belongs in `BepInEx\plugins\`, next to `NeuroMita.CustomModels.dll`.
 
-It ships in this project's release zip. If you are building from source, it comes from the
-AssimpNet NuGet package at `~/.nuget/packages/assimpnet/4.1.0/runtimes/win-x64/native/assimp.dll`.
+It ships in this project's release zip — extracting the zip into the game folder puts it in the right
+place. If you are building from source, it comes from the AssimpNet NuGet package at
+`~/.nuget/packages/assimpnet/4.1.0/runtimes/win-x64/native/assimp.dll`.
 
-Without it, **no FBX pack can be read** — this is not optional.
+Without it, **no FBX pack can be read** — this is not optional. AssetBundle packs are unaffected.
 
 ---
 

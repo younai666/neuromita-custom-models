@@ -86,12 +86,25 @@ foreach ($name in $managedExtras) {
         throw "missing dependency in build output: $name (run: dotnet build -c $Configuration)"
     }
 }
-Copy-Item (Join-Path $root 'README.md')               $stage -Force
-Copy-Item (Join-Path $root 'CHANGELOG.md')            $stage -Force
-Copy-Item (Join-Path $root 'docs\INSTALL.md')         $stage -Force
-Copy-Item (Join-Path $root 'docs\FAQ.md')             $stage -Force
-Copy-Item (Join-Path $root 'docs\FORMATS.md')         $stage -Force
-Copy-Item (Join-Path $root 'LICENSE')                 $stage -Force
+Copy-Item (Join-Path $root 'docs\READ-FIRST.txt')      $stage -Force
+Copy-Item (Join-Path $root 'docs\install.bat')         $stage -Force
+Copy-Item (Join-Path $root 'docs\install.ps1')         $stage -Force
+Copy-Item (Join-Path $root 'LICENSE')                  $stage -Force
+
+# Docs go into their own folder so the root of the archive stays obvious:
+# read-me, the game-layout folders, and the licence. Nothing else.
+$docDir = Join-Path $stage 'docs'
+New-Item -ItemType Directory -Path $docDir -Force | Out-Null
+Copy-Item (Join-Path $root 'README.md')                $docDir -Force
+Copy-Item (Join-Path $root 'CHANGELOG.md')             $docDir -Force
+Copy-Item (Join-Path $root 'docs\INSTALL.md')          $docDir -Force
+Copy-Item (Join-Path $root 'docs\FAQ.md')              $docDir -Force
+Copy-Item (Join-Path $root 'docs\FORMATS.md')          $docDir -Force
+
+# Ready-made pack folder, so the user does not have to create it (and gets the routing rules).
+$cmDir = Join-Path $stage 'CustomModels'
+New-Item -ItemType Directory -Path $cmDir -Force | Out-Null
+Copy-Item (Join-Path $root 'docs\PUT-PACKS-HERE.txt')  $cmDir -Force
 
 Get-ChildItem $pluginDir -File | ForEach-Object {
     Write-Host ("    {0,-34} {1,8:N0} KB" -f $_.Name, ($_.Length / 1KB))

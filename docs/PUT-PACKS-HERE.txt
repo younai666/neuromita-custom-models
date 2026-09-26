@@ -1,0 +1,29 @@
+把模型包放进这个文件夹里。
+Put your model packs in this folder.
+
+每个包一个子文件夹 / One subfolder per pack:
+
+    CustomModels\
+    ├── SomePack\
+    │   └── ...          (addons_config.txt + *.fbx，或一个 .vrmmod 文件)
+    └── AnotherPack\
+
+想同时替换多个角色，改用【角色文件夹】/ To drive several characters at once,
+use character folders instead:
+
+    CustomModels\
+    ├── Player\        <- 玩家 / the player character
+    ├── Crazy\         <- 疯狂米塔 / Crazy Mita
+    ├── Kind\          <- 善良米塔 / Kind Mita
+    ├── Mappie\ 或 Cappy\
+    ├── ShortHair\
+    ├── Mila\
+    ├── Sleepy\ 或 Dream\
+    └── Ghost\
+
+角色文件夹里的每个包会被路由到对应角色，而且场景里同一角色的每个实例都会被替换。
+
+在角色文件夹模式下不需要设置 TargetAvatar。
+
+详见 docs\INSTALL.md 第 3 步。
+See docs\INSTALL.md step 3 for details.

@@ -81,27 +81,39 @@ dotnet build -c Release
 powershell -File package.ps1
 ```
 
-Produces `dist\NeuroMita.CustomModels-<version>.zip` containing the plugin, `AssimpNet.dll`, the
-native `assimp.dll` and the docs — everything a user needs. Pass `-GameDir "D:\Games\NeuroMita"` to
-also deploy straight into a game folder.
+Produces `dist\NeuroMita.CustomModels-<version>.zip`. The archive mirrors the **game folder layout**
+(`BepInEx\plugins\…`), so installing is a single extraction — see below.
 
 ## Installing
 
 **Step-by-step guide: [docs/INSTALL.md](docs/INSTALL.md)** ·
 **When something breaks: [docs/FAQ.md](docs/FAQ.md)**
 
-The short version:
+The short version — **there is an installer**:
 
-1. Install **BepInEx 6.0.0-be.788 or newer** (IL2CPP, win-x64) into the game folder, then launch the
-   game once so BepInEx generates `BepInEx\interop\`.
-   Older BepInEx builds cannot read this game's metadata (v39) and fail at startup with
-   `Unsupported metadata version found! We support 23-31, got 39`.
-2. Copy **three** files into `<Game>\BepInEx\plugins\`:
-   `NeuroMita.CustomModels.dll`, `AssimpNet.dll`, `assimp.dll`.
-   All three are in the release zip — nothing needs to be downloaded or compiled separately.
-3. Put model packs into `<Game>\CustomModels\`, one subfolder per pack.
-4. Launch the game, enter a scene containing a Mita, and check `BepInEx\LogOutput.log`
+1. **Extract the release zip into the game folder** — the one containing `NeuroMita.exe`.
+   The archive mirrors the game layout, so the six plugin DLLs land in `BepInEx\plugins\` on their own.
+2. **Double-click `install.bat`.** It installs BepInEx **6.0.0-be.788** (about 34 MB, downloaded from
+   the official BepInEx build server) if it is missing, and creates the `CustomModels` folder.
+   It needs no administrator rights and never touches game files.
+3. **Launch the game once and wait ~25 seconds** while BepInEx generates `BepInEx\interop\`.
+4. Put model packs into `<Game>\CustomModels\`, one subfolder per pack. To drive several characters
+   from one install, put them in character folders instead — `CustomModels\Crazy\`, `CustomModels\Kind\`, …
+   See [Character folders](#character-folders).
+5. Launch again, enter a scene containing a Mita, and check `BepInEx\LogOutput.log`
    for `INSTALL RESULT ... failed=0`.
+
+Older BepInEx builds cannot read this game's metadata (v39) and fail at startup with
+`Unsupported metadata version found! We support 23-31, got 39` — which is why the installer pins
+be.788 rather than taking whatever is newest.
+
+> **All six plugin DLLs are required.** They are in the release zip, and they all belong in
+> `BepInEx\plugins\`. Nothing needs to be downloaded or compiled separately.
+> Do **not** copy files by hand from an older guide — earlier releases shipped only three of them, and
+> a missing `AssetsTools.NET.dll` makes every `.vrmmod` pack fail to load.
+
+Manual installation (if you would rather not run the script) is described in
+[docs/INSTALL.md](docs/INSTALL.md#doing-it-by-hand).
 
 ## Configuration
 

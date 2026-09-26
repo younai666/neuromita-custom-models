@@ -3,6 +3,39 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versioning is [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-09-26
+
+Documentation and packaging only — plugin behaviour is unchanged from 0.2.0.
+
+### Fixed
+
+- **The install instructions listed only three of the six plugin DLLs.** AssetBundle support added
+  `AssetsTools.NET.dll`, `AssetsTools.NET.Texture.dll` and `AssetRipper.TextureDecoder.dll` in 0.2.0,
+  but `README.md` and `docs/INSTALL.md` still told people to copy three files. Anyone following them
+  ends up with a plugin that loads but cannot read `.vrmmod` packs — which looks like the packs are
+  broken rather than the install. The list is now complete, and states why all six are needed.
+- Other stale instructions in the same pages: the `CustomModels` section never mentioned character
+  folders (the headline feature of 0.2.0), and the log samples showed a format the plugin has not
+  emitted since 0.1.0.
+
+### Added
+
+- **`install.bat`** — extract the archive into the game folder and run it. It locates the game folder,
+  places the plugin, downloads **BepInEx 6.0.0-be.788** if it is missing, and creates `CustomModels`.
+  No administrator rights, no game files touched, safe to run twice. An older BepInEx is reported
+  rather than silently overwritten; `-Force` replaces it.
+  The build is pinned deliberately: this game needs metadata-v39 support, and taking whatever is
+  newest is how people end up with `Unsupported metadata version found! We support 23-31, got 39`.
+- **`READ-FIRST.txt`** at the root of the archive (Chinese and English), and
+  **`CustomModels\PUT-PACKS-HERE.txt`** documenting the character-folder routing in the folder where
+  packs actually go.
+
+### Changed
+
+- The release zip is now a drop-in for the game folder: `BepInEx\plugins\`, `CustomModels\`, `docs\`,
+  plus `READ-FIRST.txt` and `LICENSE`. The documents moved into `docs\` so the archive root only
+  shows what a user needs to see.
+
 ## [0.2.0] — 2025-09-25
 
 The headline: **AssetBundle packs now work**, and packs no longer need a config file.

@@ -1,0 +1,40 @@
+NeuroMita.CustomModels — READ THIS FIRST
+========================================
+
+这个压缩包已经排好了目录结构，不要手动 copy 文件。
+
+中文
+----
+  1. 先装 BepInEx（见 docs\INSTALL.md 第 1 步）。
+     必须是 6.0.0-be.788 或更新版本，装完先启动一次游戏，等它生成 interop 再关。
+
+  2. 把本压缩包解压到游戏根目录 —— 也就是含 NeuroMita.exe 的那个文件夹。
+     提示"合并文件夹 / 覆盖"时选"是"。
+
+  3. 模型包放进 CustomModels\ 里，每个包一个子文件夹。
+     想同时替换多个角色，用角色文件夹：CustomModels\Crazy\、CustomModels\Kind\ 等。
+
+  完整说明：docs\INSTALL.md        出问题看：docs\FAQ.md
+
+  ⚠ 不要只 copy 其中几个 DLL —— 六个都是必需的，少一个会静默失效
+    （尤其 AssetsTools.NET.dll，少了它所有 .vrmmod 包都装不上）。
+
+
+English
+-------
+Do not copy files by hand — the archive already carries the right folder layout.
+
+  1. Install BepInEx (docs\INSTALL.md, step 1). It must be 6.0.0-be.788 or newer.
+     Launch the game once afterwards so BepInEx generates its interop assemblies.
+
+  2. Extract this archive into the game folder — the one containing NeuroMita.exe.
+     Say yes when Windows asks about merging folders.
+
+  3. Put model packs into CustomModels\, one subfolder per pack. To drive several
+     characters at once, use character folders such as CustomModels\Crazy\ or
+     CustomModels\Kind\.
+
+  Full guide: docs\INSTALL.md      Troubleshooting: docs\FAQ.md
+
+  All six DLLs are required. Missing one fails quietly — in particular, without
+  AssetsTools.NET.dll every .vrmmod pack stops loading.
