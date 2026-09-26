@@ -506,9 +506,10 @@ namespace NeuroMita.CustomModels
                 if (multi)
                 {
                     int applied = 0;
+                    var usedSlots = new HashSet<int>();
                     foreach (var p in pkg.Parts)
                     {
-                        var slot = FindBestRenderer(root, p.Name);
+                        var slot = FindBestRenderer(root, p.Name, usedSlots);
                         if (slot == null)
                         {
                             Logging.Warn($"[CM] no slot matched part '{p.Name}'");
@@ -519,7 +520,8 @@ namespace NeuroMita.CustomModels
                         // 同上：装配失败就不贴贴图，也不能算作"已装配"
                         // （否则会出现"4/4 成功"的报告，实际上一块都没换上去）。
                         if (!rr.Ok) continue;
-                        ApplyTexture(bp, slot, p.Name);
+                        ApplyTexture(bp, slot, p);
+                        usedSlots.Add(slot.GetInstanceID());
                         applied++;
                     }
 
@@ -551,7 +553,7 @@ namespace NeuroMita.CustomModels
                     // 结果就是"模型还是原来的，材质变成了别的包的"。
                     if (r.Ok)
                     {
-                        ApplyTexture(bp, body, part.Name);
+                        ApplyTexture(bp, body, part);
                         int hidden = HideOtherRenderers(root, body, pkg.Parts.Count);
                         Logging.Info($"[CM] whole-body replace: hid {hidden} other renderer(s)");
                     }
@@ -560,12 +562,13 @@ namespace NeuroMita.CustomModels
         }
 
         /// <summary>把包里的贴图贴到该槽位的材质上（AssetBundle 包专用）。</summary>
-        private static void ApplyTexture(BundlePackage bp, SkinnedMeshRenderer slot, string partName)
+        private static void ApplyTexture(BundlePackage bp, SkinnedMeshRenderer slot, ModelPart part)
         {
             if (bp == null || slot == null || bp.Textures.Count == 0) return;
             try
             {
-                var tex = PickTexture(bp, partName);
+                var tex = bp.GetSourceTexture(part);
+                if (tex == null) tex = PickTexture(bp, part != null ? part.Name : null);
                 if (tex == null) return;
                 var mats = slot.sharedMaterials;
                 if (mats == null || mats.Length == 0) return;
@@ -591,6 +594,14 @@ namespace NeuroMita.CustomModels
             try
             {
                 var low = (partName ?? "").ToLowerInvariant();
+                string preferred = low.Contains("hair") ? "hair"
+                                 : low.Contains("head") || low.Contains("face") || low.Contains("attribute") ? "face"
+                                 : low.Contains("sweater") || low.Contains("skirt") || low.Contains("cloth") ? "cloth"
+                                 : low.Contains("body") || low.Contains("pant") || low.Contains("shoe") ? "body"
+                                 : low.Contains("outline") ? "outline" : null;
+                if (preferred != null)
+                    foreach (var kv in bp.Textures)
+                        if (kv.Key.Equals(preferred, StringComparison.OrdinalIgnoreCase)) return kv.Value;
                 foreach (var kv in bp.Textures)
                 {
                     var n = kv.Key.ToLowerInvariant();
@@ -630,7 +641,7 @@ namespace NeuroMita.CustomModels
         /// 包的部件名千奇百怪（Body / Clothes / Arm / Head / Hair / Sweater...），
         /// 这里只做"关键词包含"的宽松匹配。
         /// </summary>
-        private static SkinnedMeshRenderer FindBestRenderer(Transform root, string partName)
+        private static SkinnedMeshRenderer FindBestRenderer(Transform root, string partName, HashSet<int> usedSlots)
         {
             try
             {
@@ -639,6 +650,19 @@ namespace NeuroMita.CustomModels
 
                 string key = null;
                 var low = (partName ?? "").ToLowerInvariant();
+                string preferred = low == "hair" ? "hairs"
+                                 : low == "head" ? "head"
+                                 : low == "face" ? "facelayer"
+                                 : low == "sweater" ? "sweaterslot"
+                                 : low == "body" ? "bodyslot"
+                                 : low == "pantyhose" ? "pantyhoseSlot"
+                                 : low == "skirt" ? "skirtslot"
+                                 : low == "shoes" ? "shoesslot"
+                                 : low == "attribute" ? "attributeslot" : null;
+                if (preferred != null)
+                    foreach (var s in smrs)
+                        if (s != null && !usedSlots.Contains(s.GetInstanceID()) &&
+                            string.Equals(s.gameObject.name, preferred, StringComparison.OrdinalIgnoreCase)) return s;
                 if (low.Contains("hair")) key = "hair";
                 else if (low.Contains("head") || low.Contains("face")) key = "head";
                 else if (low.Contains("arm") || low.Contains("hand") || low.Contains("glove")) key = "arm";
@@ -649,7 +673,7 @@ namespace NeuroMita.CustomModels
 
                 foreach (var s in smrs)
                 {
-                    if (s == null) continue;
+                    if (s == null || usedSlots.Contains(s.GetInstanceID())) continue;
                     var n = (s.gameObject != null ? s.gameObject.name : "").ToLowerInvariant();
                     bool hit = key == "hair" ? n.Contains("hair")
                              : key == "head" ? (n.Contains("head") || n.Contains("face"))

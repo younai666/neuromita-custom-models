@@ -23,6 +23,8 @@ namespace NeuroMita.CustomModels
         private readonly List<ModelPart> _parts = new List<ModelPart>();
         private readonly Dictionary<string, UnityEngine.Texture2D> _textures =
             new Dictionary<string, UnityEngine.Texture2D>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<long, UnityEngine.Texture2D> _texturesByPathId = new Dictionary<long, UnityEngine.Texture2D>();
+        private readonly Dictionary<long, long> _mainTextureByMaterialPathId = new Dictionary<long, long>();
         private AssetsManager _am;
         private BundleFileInstance _bun;
         private AssetsFileInstance _inst;
@@ -75,6 +77,7 @@ namespace NeuroMita.CustomModels
             return null;
         }
         private static int I(AssetTypeValueField p, string n) { var f = F(p, n); try { return f == null ? -1 : f.AsInt; } catch { return -1; } }
+        private static long PathId(AssetTypeValueField pointer) { var f = F(pointer, "m_PathID"); try { return f == null ? 0 : f.AsLong; } catch { return 0; } }
         private static string S(AssetTypeValueField p, string n) { var f = F(p, n); try { return f == null ? null : f.AsString; } catch { return null; } }
 
         /// <summary>vector 的 Array 元素列表（用于 SubMesh / Matrix4x4 这类结构数组）。</summary>
@@ -129,9 +132,10 @@ namespace NeuroMita.CustomModels
                 swStep.Restart(); BuildNameIndex();      long msIdx = swStep.ElapsedMilliseconds;
                 swStep.Restart(); CollectMeshes();       long msMesh = swStep.ElapsedMilliseconds;
                 swStep.Restart(); CollectTextures();     long msTex = swStep.ElapsedMilliseconds;
+                swStep.Restart(); CollectMaterialTextureLinks(); long msMat = swStep.ElapsedMilliseconds;
                 Logging.Verbose($"[PERF] open '{Path.GetFileName(file)}' total={sw.ElapsedMilliseconds}ms " +
                              $"[loadBundle={msLoad} loadAssets={msAssets} nameIndex={msIdx} " +
-                             $"meshes={msMesh} textures={msTex}] " +
+                             $"meshes={msMesh} textures={msTex} materialLinks={msMat}] " +
                              $"{_parts.Count} parts, {_textures.Count} textures");
                 return _parts.Count > 0;
             }
@@ -162,7 +166,7 @@ namespace NeuroMita.CustomModels
                     {
                         var t = _am.GetBaseField(_inst, inf);
                         var go = F(t, "m_GameObject");
-                        if (go != null) _tfToGo[inf.PathId] = I(go, "m_PathID");
+                        if (go != null) _tfToGo[inf.PathId] = PathId(go);
                     }
                 }
                 catch { }
@@ -172,8 +176,7 @@ namespace NeuroMita.CustomModels
 
         private string BoneNameOf(AssetTypeValueField pptr)
         {
-            long pid;
-            try { pid = I(pptr, "m_PathID"); } catch { return null; }
+            long pid = PathId(pptr);
             long goId;
             if (_tfToGo.TryGetValue(pid, out goId))
             {
@@ -197,8 +200,11 @@ namespace NeuroMita.CustomModels
                     var smr = _am.GetBaseField(_inst, inf);
                     var mm = F(smr, "m_Mesh");
                     if (mm == null) continue;
-                    long mp = I(mm, "m_PathID");
-                    if (mp != 0 && !smrByMesh.ContainsKey(mp)) smrByMesh[mp] = smr;
+                    long mp = PathId(mm);
+                    if (mp != 0 && !smrByMesh.ContainsKey(mp))
+                    {
+                        smrByMesh[mp] = smr;
+                    }
                 }
                 catch { }
             }
@@ -254,6 +260,7 @@ namespace NeuroMita.CustomModels
                     // 解码成 RGBA32（数据可能是 DXT 压缩 + mipmap 链）
                     var swDec = System.Diagnostics.Stopwatch.StartNew();
                     byte[] rgba = DecodeToRgba32(data, w, h, fmtId);
+                    if (rgba == null) rgba = tf.DecodeTextureRaw(data, false);
                     long msDec = swDec.ElapsedMilliseconds;
                     if (rgba == null)
                     {
@@ -268,6 +275,7 @@ namespace NeuroMita.CustomModels
                     if (tex == null) { try { tex = new UnityEngine.Texture2D(w, h); } catch { } }
                     if (tex == null) { Logging.Warn($"[Bundle] texture '{nm}': 无法创建 Texture2D"); continue; }
                     tex.name = nm;
+                    _texturesByPathId[inf.PathId] = tex;
 
                     int levels = 1;
                     try { levels = tex.mipmapCount; } catch { }
@@ -288,6 +296,40 @@ namespace NeuroMita.CustomModels
                     Logging.Warn("[Bundle] texture failed: " + e.Message);
                 }
             }
+        }
+
+        private void CollectMaterialTextureLinks()
+        {
+            foreach (var inf in _inst.file.AssetInfos)
+            {
+                if (inf.TypeId != 21) continue;
+                try
+                {
+                    var material = _am.GetBaseField(_inst, inf);
+                    var saved = F(material, "m_SavedProperties");
+                    var texEnvs = ElemList(F(saved, "m_TexEnvs"));
+                    foreach (var entry in texEnvs)
+                    {
+                        var propertyName = S(entry, "first");
+                        if (string.IsNullOrEmpty(propertyName)) continue;
+                        var texturePathId = PathId(F(F(entry, "second"), "m_Texture"));
+                        if (texturePathId == 0) continue;
+                        if (string.Equals(propertyName, "_MainTex", StringComparison.Ordinal) ||
+                            (string.Equals(propertyName, "_BaseMap", StringComparison.Ordinal) &&
+                             !_mainTextureByMaterialPathId.ContainsKey(inf.PathId)))
+                            _mainTextureByMaterialPathId[inf.PathId] = texturePathId;
+                    }
+                }
+                catch { }
+            }
+            Logging.Verbose($"[Bundle] main-texture links: {_mainTextureByMaterialPathId.Count} materials");
+        }
+
+        public UnityEngine.Texture2D GetSourceTexture(ModelPart part)
+        {
+            if (part == null || part.SourceMaterialPathId == 0) return null;
+            return _mainTextureByMaterialPathId.TryGetValue(part.SourceMaterialPathId, out var texturePathId) &&
+                   _texturesByPathId.TryGetValue(texturePathId, out var texture) ? texture : null;
         }
 
         // ---------- 从 bundle 的 .resS 流里取贴图数据 ----------
@@ -572,6 +614,7 @@ namespace NeuroMita.CustomModels
             var chans = ElemList(F(vd, "m_Channels"));
             var stride = new Dictionary<int, int>();
             var layout = new List<int[]>();   // {stream, offset, format, dimension, attribute}
+            bool hasUvChannel = false;
             for (int i = 0; i < chans.Count; i++)
             {
                 var c = chans[i];
@@ -581,16 +624,31 @@ namespace NeuroMita.CustomModels
                 int fmt = I(c, "format");
                 int dim = I(c, "dimension");
                 if (dim <= 0) continue;
+                if (i == 4)
+                {
+                    hasUvChannel = true;
+                    if (fmt != 0 && fmt != 1)
+                        Logging.Warn($"[Bundle] '{name}': unsupported UV0 format {fmt}");
+                }
                 // 注意：ChannelInfo 没有 attribute 字段，属性号就是数组下标本身
                 layout.Add(new[] { st, off, fmt, dim, i });
                 int end = off + FormatSize(fmt, dim);
                 if (!stride.ContainsKey(st) || stride[st] < end) stride[st] = end;
             }
+            if (!hasUvChannel) Logging.Warn($"[Bundle] '{name}': no UV0 channel");
 
             // stream 在缓冲区里首尾相接，且每个 stream 按 16 字节对齐
             var streamBase = new Dictionary<int, int>();
             var streamOrder = new List<int>(stride.Keys);
             streamOrder.Sort();
+            bool hasBlendWeights = false, hasSingleBlendIndex = false;
+            foreach (var channel in layout)
+            {
+                if (channel[4] == 12) hasBlendWeights = true;
+                if (channel[4] == 13 && channel[3] == 1) hasSingleBlendIndex = true;
+            }
+            bool rigidSkin = !hasBlendWeights && hasSingleBlendIndex;
+            if (rigidSkin) Logging.Verbose($"[Bundle] {name}: single-bone vertices use implicit unit weights");
             int acc = 0;
             foreach (var s in streamOrder)
             {
@@ -614,6 +672,7 @@ namespace NeuroMita.CustomModels
             {
                 float w0 = 0, w1 = 0, w2 = 0, w3 = 0;
                 int b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+                bool readRigidIndex = false;
 
                 for (int li = 0; li < layout.Count; li++)
                 {
@@ -623,8 +682,7 @@ namespace NeuroMita.CustomModels
                     int baseOff = streamBase[st] + v * stride[st] + off;
                     if (baseOff + FormatSize(fmt, dim) > vraw.Length) continue;
 
-                    // Float32 之外只允许 BlendIndices 的整数格式，其余格式跳过
-                    if (attr != 13 && fmt != 0)
+                    if (attr != 13 && fmt != 0 && fmt != 1)
                     {
                         if (li == 0) Logging.Warn($"[Bundle] '{name}': non-float vertex format {fmt} on attr {attr}, skipped");
                         continue;
@@ -633,24 +691,24 @@ namespace NeuroMita.CustomModels
                     switch (attr)
                     {
                         case 0:   // Position
-                            if (dim >= 3) verts[v] = new Vector3(R(vraw, baseOff), R(vraw, baseOff + 4), R(vraw, baseOff + 8));
+                            if (dim >= 3) verts[v] = new Vector3(R(vraw, baseOff, fmt), R(vraw, baseOff + FormatSize(fmt, 1), fmt), R(vraw, baseOff + FormatSize(fmt, 2), fmt));
                             break;
                         case 1:   // Normal
-                            if (dim >= 3) { norms[v] = new Vector3(R(vraw, baseOff), R(vraw, baseOff + 4), R(vraw, baseOff + 8)); hasNormal = true; }
+                            if (dim >= 3) { norms[v] = new Vector3(R(vraw, baseOff, fmt), R(vraw, baseOff + FormatSize(fmt, 1), fmt), R(vraw, baseOff + FormatSize(fmt, 2), fmt)); hasNormal = true; }
                             break;
                         case 4:   // TexCoord0
-                            if (dim >= 2) { uvs[v] = new Vector2(R(vraw, baseOff), R(vraw, baseOff + 4)); hasUv = true; }
+                            if (dim >= 2) { uvs[v] = new Vector2(R(vraw, baseOff, fmt), R(vraw, baseOff + FormatSize(fmt, 1), fmt)); hasUv = true; }
                             break;
                         case 12:  // BlendWeight
-                            if (dim >= 1) w0 = R(vraw, baseOff);
-                            if (dim >= 2) w1 = R(vraw, baseOff + 4);
-                            if (dim >= 3) w2 = R(vraw, baseOff + 8);
-                            if (dim >= 4) w3 = R(vraw, baseOff + 12);
+                            if (dim >= 1) w0 = R(vraw, baseOff, fmt);
+                            if (dim >= 2) w1 = R(vraw, baseOff + FormatSize(fmt, 1), fmt);
+                            if (dim >= 3) w2 = R(vraw, baseOff + FormatSize(fmt, 2), fmt);
+                            if (dim >= 4) w3 = R(vraw, baseOff + FormatSize(fmt, 3), fmt);
                             break;
                         case 13:  // BlendIndices（可能是 UInt8 / UInt16 / UInt32）
                             {
                                 int sz = FormatSize(fmt, 1);
-                                if (dim >= 1) b0 = Idx(vraw, baseOff + sz * 0, fmt);
+                                if (dim >= 1) { b0 = Idx(vraw, baseOff + sz * 0, fmt); readRigidIndex = true; }
                                 if (dim >= 2) b1 = Idx(vraw, baseOff + sz * 1, fmt);
                                 if (dim >= 3) b2 = Idx(vraw, baseOff + sz * 2, fmt);
                                 if (dim >= 4) b3 = Idx(vraw, baseOff + sz * 3, fmt);
@@ -658,6 +716,8 @@ namespace NeuroMita.CustomModels
                             break;
                     }
                 }
+
+                if (rigidSkin && readRigidIndex) w0 = 1f;
 
                 weights[v] = new BoneWeight
                 {
@@ -714,11 +774,25 @@ namespace NeuroMita.CustomModels
                 Mesh = mesh,
                 BoneNames = boneNames,
                 Bindposes = bindposes,
+                SourceMaterialPathId = smr != null && ElemList(F(smr, "m_Materials")).Count > 0
+                    ? PathId(ElemList(F(smr, "m_Materials"))[0]) : 0,
                 SourceFile = RootPath
             };
         }
 
-        private static float R(byte[] b, int o) { return BitConverter.ToSingle(b, o); }
+        private static float R(byte[] b, int o, int fmt)
+        {
+            if (fmt == 0) return BitConverter.ToSingle(b, o);
+            ushort bits = BitConverter.ToUInt16(b, o);
+            int exponent = (bits >> 10) & 31;
+            int mantissa = bits & 1023;
+            float magnitude = exponent == 0
+                ? (float)(mantissa * Math.Pow(2, -24))
+                : exponent == 31
+                    ? (mantissa == 0 ? float.PositiveInfinity : float.NaN)
+                    : (float)((1 + mantissa / 1024.0) * Math.Pow(2, exponent - 15));
+            return (bits & 0x8000) != 0 ? -magnitude : magnitude;
+        }
 
         /// <summary>按 VertexAttributeFormat 读一个骨骼索引。</summary>
         private static int Idx(byte[] b, int o, int fmt)

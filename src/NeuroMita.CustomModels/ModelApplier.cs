@@ -93,7 +93,7 @@ namespace NeuroMita.CustomModels
                 int count = part.BoneNames != null ? part.BoneNames.Length : 0;
                 var bones = new Transform[count];
                 var bindposes = new Matrix4x4[count];
-                int missing = 0, bpFromTarget = 0, bpFromModel = 0;
+                int missing = 0, remapped = 0, bpFromTarget = 0, bpFromModel = 0;
 
                 // 骨骼名索引只建一次。
                 // 之前是每根骨骼都递归走一遍整棵树（O(n²)）—— Lumine 那种 285 根骨骼的包
@@ -105,7 +105,17 @@ namespace NeuroMita.CustomModels
                     var name = part.BoneNames[i];
                     Transform t = null;
                     if (!string.IsNullOrEmpty(name)) skeletonByName.TryGetValue(name, out t);
-                    if (t == null) { t = skeletonRoot; missing++; }
+                    if (t == null)
+                    {
+                        missing++;
+                        var nearest = FindNearestMappedBone(name, modelSample, targetBp, skeletonByName, align.Fix);
+                        if (nearest != null && skeletonByName.TryGetValue(nearest, out t))
+                        {
+                            name = nearest;
+                            remapped++;
+                        }
+                        else t = skeletonRoot;
+                    }
                     bones[i] = t;
 
                     if (!string.IsNullOrEmpty(name) && targetBp.TryGetValue(name, out var mbp))
@@ -124,23 +134,18 @@ namespace NeuroMita.CustomModels
                         bindposes[i] = Matrix4x4.identity;
                     }
                 }
-                Logging.Verbose($"[Apply] bones={count} missing={missing} bpFromTarget={bpFromTarget} bpFromModel={bpFromModel}");
+                Logging.Verbose($"[Apply] bones={count} missing={missing} remapped={remapped} bpFromTarget={bpFromTarget} bpFromModel={bpFromModel}");
 
-                // 缺失骨骼（游戏骨架里找不到同名骨骼）的顶点会被拉到骨架根，
-                // 视觉上是一条细长尖刺。
-                //
-                // 这里**不**在运行时改 mesh.boneWeights 去清权重：IL2CPP 下读写运行时的
-                // boneWeights 会直接崩（0xc0000005，实测踩过）。缺骨骼时宁可留一条尖刺
-                // 也不能把游戏打崩，所以只报警告。
                 if (missing > 0)
                     Logging.Warn($"[Apply] {missing} bone(s) not found in the game skeleton; " +
-                                 "their vertices will follow the skeleton root (expect a visible spike)");
+                                 $"{remapped} mapped to nearby existing bones, {missing - remapped} use the skeleton root");
 
                 // ---- 5) 装配 ----
                 mesh.bindposes = bindposes;
                 target.sharedMesh = mesh;
                 target.bones = bones;
                 if (bones.Length > 0 && bones[0] != null) target.rootBone = skeletonRoot;
+                target.updateWhenOffscreen = true;
 
                 rep.Ok = true;
                 rep.Bones = count;
@@ -155,6 +160,41 @@ namespace NeuroMita.CustomModels
                 Logging.Error("[Apply] failed: " + e);
                 return rep;
             }
+        }
+
+        private static string FindNearestMappedBone(string name, AutoAlign.Sample modelSample,
+            Dictionary<string, Matrix4x4> targetBp, Dictionary<string, Transform> skeletonByName, Matrix4x4 modelToTarget)
+        {
+            if (string.IsNullOrEmpty(name) || !modelSample.Pos.TryGetValue(name, out var pos)) return null;
+            pos = modelToTarget.MultiplyPoint3x4(pos);
+            string best = null;
+            float bestDistance = float.PositiveInfinity;
+            foreach (var candidate in targetBp.Keys)
+            {
+                if (!skeletonByName.ContainsKey(candidate) || !modelSample.Pos.TryGetValue(candidate, out var other)) continue;
+                if (!IsValidRemap(name, candidate)) continue;
+                other = modelToTarget.MultiplyPoint3x4(other);
+                float distance = (pos - other).sqrMagnitude;
+                if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+            }
+            return best;
+        }
+
+        private static bool IsValidRemap(string source, string candidate)
+        {
+            if (source.StartsWith("Ahoge", StringComparison.Ordinal) ||
+                source.StartsWith("BangHair", StringComparison.Ordinal) ||
+                source.StartsWith("HairSide", StringComparison.Ordinal))
+                return candidate.IndexOf("hair", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       string.Equals(candidate, "Head", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(candidate, "Neck", StringComparison.OrdinalIgnoreCase);
+
+            if (source.StartsWith("Butt", StringComparison.Ordinal))
+                return candidate.IndexOf("hips", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       candidate.IndexOf("pelvis", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       candidate.IndexOf("skirt", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            return true;
         }
 
         private static void TransformMesh(Mesh mesh, Matrix4x4 fix)
