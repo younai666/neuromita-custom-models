@@ -543,7 +543,10 @@ namespace NeuroMita.CustomModels
                         return;
                     }
 
-                    var part = pkg.Parts[0];
+                    var part = PickWholeBodyPart(pkg);
+                    if (part == null) { Logging.Error("[CM] package has no usable mesh"); return; }
+                    Logging.Verbose($"[CM] whole-body part: '{part.Name}' (" +
+                                    $"{part.Mesh.vertexCount} verts) of {pkg.Parts.Count} part(s)");
                     Logging.Info($"[CM] applying '{part.Name}' -> '{body.gameObject.name}' (whole-body)");
                     var r = ModelApplier.Apply(body, part, root);
                     Logging.Info($"[CM] RESULT {r}");
@@ -561,6 +564,26 @@ namespace NeuroMita.CustomModels
             }
         }
 
+        /// <summary>
+        /// 整体替换时挑"最像整个人"的那一块。
+        ///
+        /// 以前直接用 Parts[0]，那只是资源文件里的顺序 —— 可能是头发或配饰。
+        /// 一旦挑错，整个角色会被一块配饰替换掉、其余部件全部隐藏，而且日志看着像成功。
+        /// 身体一定是顶点最多的那块，按这个挑就与文件顺序无关了。
+        /// </summary>
+        private static ModelPart PickWholeBodyPart(ModelPackage pkg)
+        {
+            ModelPart best = null;
+            int bestVerts = -1;
+            foreach (var p in pkg.Parts)
+            {
+                if (p == null || p.Mesh == null) continue;
+                int v = 0;
+                try { v = p.Mesh.vertexCount; } catch { }
+                if (v > bestVerts) { bestVerts = v; best = p; }
+            }
+            return best;
+        }
         /// <summary>把包里的贴图贴到该槽位的材质上（AssetBundle 包专用）。</summary>
         private static void ApplyTexture(BundlePackage bp, SkinnedMeshRenderer slot, ModelPart part)
         {
@@ -577,8 +600,11 @@ namespace NeuroMita.CustomModels
                 {
                     if (mats[i] == null) continue;
                     // **必须克隆**：米塔之间共用材质实例，直接写会把所有米塔一起刷成这张图。
-                    Material m = mats[i];
+                    // 克隆失败时**跳过**而不是退回原材质 —— 退回就等于写共享材质，
+                    // 那正是这个克隆要防止的事。宁可不贴这张图。
+                    Material m = null;
                     try { m = new Material(mats[i]); } catch { }
+                    if (m == null) { Logging.Warn($"[CM]   cannot clone material '{mats[i].name}', skipping texture"); continue; }
                     m.mainTexture = tex;
                     mats[i] = m;
                 }
