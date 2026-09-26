@@ -194,7 +194,8 @@ See [docs/FORMATS.md](docs/FORMATS.md) for the layout of both formats, the `addo
 - [ ] Humanoid retargeting for packs whose bones are *not* named after the game skeleton
       (Mixamo `mixamorig:*`, Source `ValveBiped.*`, VRM `_N_joint_*`)
 - [ ] Per-mod toggle and an in-game picker
-- [x] BlendShape / facial expression mapping for FBX and AssetBundle packs
+- [x] Lip sync for FBX and AssetBundle packs
+- [ ] BlendShape / facial expression mapping
 - [ ] MagicaCloth2 re-binding for hair and skirt physics
 
 ## AssetBundle packages
@@ -258,8 +259,8 @@ Notes:
   skeleton is a different rig (Mixamo `mixamorig:*`, Source `ValveBiped.*`, VRM `_N_joint_*`) are
   read fine but cannot be driven — the plugin logs
   `incompatible rig: only N of M bones ... share a name`. Retargeting is not implemented.
-- Custom head morphs use a CPU fallback because this game's generated IL2CPP `Mesh.AddBlendShapeFrame` bridge throws while marshalling `ReadOnlySpan<T>`. The plugin retains morph channel names and applies speech and face-expression weights to replacement mesh vertices. Other channels in the same package stay available through the game's `MitaFaceController` blend-shape API.
-- Face expressions map by semantic channel names (for example `SmileSmall`, `EyeBrowsDown`, `EyesWonder`, and common ARKit/VRChat aliases). Packs with no compatible facial channels still install, but their expressions are skipped with a verbose diagnostic.
+- Custom head morphs use a CPU fallback because this game's generated IL2CPP `Mesh.AddBlendShapeFrame` bridge throws while marshalling `ReadOnlySpan<T>`. The plugin retains morph channel names and applies speech weights to replacement mesh vertices. Other channels in the same package stay available through the game's `MitaFaceController` blend-shape API.
+- Lip sync was runtime-checked with the `AshleyClassic` AssetBundle on `Mita Crazy` in `CrazyHouse`; the game's voice component bound to the replacement `Head` mesh and resolved its `O` and `A` channels. Face-emotion mapping is not confirmed working: expressions did not visibly affect Ashley in that same test case, so facial expression support remains unfinished.
 - Hair and skirt cloth physics (MagicaCloth2) are not re-bound — expect stiff or misbehaving hair on replacement models.
 - Hand IK targets and item mount points still reference the original bones. They keep working because
   only *meshes* are replaced, never the skeleton — but they follow the original proportions.

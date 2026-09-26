@@ -144,9 +144,20 @@ namespace NeuroMita.AshleyAutoTest
                 var material = faceLayer.material;
                 var texture = material != null ? material.GetTexture("_MainTex") : null;
                 float alpha = material != null && material.HasProperty("_AlphaMod") ? material.GetFloat("_AlphaMod") : float.NaN;
+                var sourceTextures = _actor.LegacyConfig != null && _actor.LegacyConfig.faceLayerTextures != null
+                    ? _actor.LegacyConfig.faceLayerTextures.textures2d
+                    : null;
+                string[] textureNames = Array.Empty<string>();
+                if (sourceTextures != null)
+                {
+                    textureNames = new string[sourceTextures.Length];
+                    for (int i = 0; i < sourceTextures.Length; i++)
+                        textureNames[i] = sourceTextures[i] != null ? sourceTextures[i].name : "<null>";
+                }
                 Log($"layer='{label}' rendererEnabled={faceLayer.enabled} active={faceLayer.gameObject.activeInHierarchy} " +
                     $"mesh='{(faceLayer.sharedMesh != null ? faceLayer.sharedMesh.name : "<null>")}' " +
-                    $"texture='{(texture != null ? texture.name : "<null>")}' alpha={alpha}");
+                    $"texture='{(texture != null ? texture.name : "<null>")}' alpha={alpha} " +
+                    $"sourceTextures=[{string.Join(",", textureNames)}]");
             }
             catch (Exception e) { Log($"layer='{label}' state read failed: {e.Message}"); }
         }
