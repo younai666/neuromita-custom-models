@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using BepInEx;
 using BepInEx.Configuration;
+using HarmonyLib;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
@@ -59,6 +60,7 @@ namespace NeuroMita.CustomModels
                 var go = new GameObject("NeuroMita.CustomModels");
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 go.AddComponent<ModelRuntime>();
+                MorphRuntimePatches.Install(new Harmony(PluginGuid + ".morphs"));
                 Logging.Info("[CM] runtime injected");
             }
             catch (Exception e)
@@ -95,6 +97,8 @@ namespace NeuroMita.CustomModels
             if (_done || _ticks % 120 != 0) return;
             _done = TryRun();
         }
+
+        private void LateUpdate() => CpuMorphRuntime.ApplyPending();
 
         private bool TryRun()
         {

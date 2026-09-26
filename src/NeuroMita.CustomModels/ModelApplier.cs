@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
 namespace NeuroMita.CustomModels
@@ -117,7 +116,6 @@ namespace NeuroMita.CustomModels
                 mesh.name = (part.Mesh.name ?? "mesh") + "_aligned";
                 var swTr = System.Diagnostics.Stopwatch.StartNew();
                 TransformMesh(mesh, align.Fix);
-                int importedBlendShapeFrames = ApplyBlendShapes(mesh, part.BlendShapes, align.Fix);
                 msTransform = swTr.ElapsedMilliseconds;
 
                 // ---- 3) 目标骨架的 bindpose 表（按骨骼名）----
@@ -191,10 +189,11 @@ namespace NeuroMita.CustomModels
                 mesh.bindposes = bindposes;
                 target.sharedMesh = mesh;
                 target.bones = bones;
+                bool morphsRegistered = CpuMorphRuntime.Register(target, mesh, part.BlendShapes, align.Fix);
                 if (bones.Length > 0 && bones[0] != null) target.rootBone = skeletonRoot;
                 target.updateWhenOffscreen = true;
                 Logging.Verbose($"[Apply] blendShapes source={(part.BlendShapes != null ? part.BlendShapes.Count : 0)} " +
-                                $"frames={CountFrames(part.BlendShapes)} imported={importedBlendShapeFrames}");
+                                $"frames={CountFrames(part.BlendShapes)} cpuFallback={morphsRegistered}");
                 LogBlendShapes(mesh);
 
                 rep.Ok = true;
@@ -248,83 +247,6 @@ namespace NeuroMita.CustomModels
 
             mesh.RecalculateBounds();
         }
-
-        private static int ApplyBlendShapes(Mesh mesh, IList<ModelBlendShape> blendShapes, Matrix4x4 fix)
-        {
-            int imported = 0;
-            if (mesh == null || blendShapes == null) return imported;
-            bool loggedBlendShapeException = false;
-            foreach (var shape in blendShapes)
-            {
-                if (shape == null || string.IsNullOrWhiteSpace(shape.Name) || shape.Frames == null) continue;
-                var orderedFrames = new List<ModelBlendShapeFrame>(shape.Frames);
-                orderedFrames.Sort((a, b) => a.Weight.CompareTo(b.Weight));
-                float? previousWeight = null;
-                foreach (var frame in orderedFrames)
-                {
-                    try
-                    {
-                        if (frame == null || frame.DeltaVertices == null || frame.DeltaNormals == null || frame.DeltaTangents == null ||
-                            frame.DeltaVertices.Length != mesh.vertexCount || frame.DeltaNormals.Length != mesh.vertexCount ||
-                            frame.DeltaTangents.Length != mesh.vertexCount)
-                            throw new InvalidDataException("delta array length does not match base mesh");
-                        if (!IsFinite(frame.Weight)) throw new InvalidDataException("frame weight is not finite");
-                        if (previousWeight.HasValue && Mathf.Abs(previousWeight.Value - frame.Weight) < 0.0001f)
-                            throw new InvalidDataException($"duplicate frame weight {frame.Weight}");
-
-                        var deltaVertices = TransformDeltas(frame.DeltaVertices, fix);
-                        var deltaNormals = TransformDeltas(frame.DeltaNormals, fix);
-                        var deltaTangents = TransformDeltas(frame.DeltaTangents, fix);
-                        // The game's generated array overload also forwards through ReadOnlySpan;
-                        // retain the first full exception in verbose logs to diagnose interop failures.
-                        mesh.AddBlendShapeFrame(shape.Name, frame.Weight,
-                            new Il2CppStructArray<Vector3>(deltaVertices),
-                            new Il2CppStructArray<Vector3>(deltaNormals),
-                            new Il2CppStructArray<Vector3>(deltaTangents));
-                        previousWeight = frame.Weight;
-                        imported++;
-                    }
-                    catch (Exception e)
-                    {
-                        bool spanInteropUnavailable = e is MissingMethodException &&
-                            e.Message.IndexOf("GetPinnableReference", StringComparison.Ordinal) >= 0;
-                        if (spanInteropUnavailable)
-                        {
-                            if (!loggedBlendShapeException)
-                            {
-                                loggedBlendShapeException = true;
-                                Logging.Warn("[Apply] BlendShape import unavailable: Unity IL2CPP ReadOnlySpan interop method is missing");
-                                Logging.Verbose("[Apply] first BlendShape exception detail: " + e);
-                            }
-                            return imported;
-                        }
-                        Logging.Warn($"[Apply] BlendShape '{shape.Name}' frame skipped: {e.Message}");
-                        if (!loggedBlendShapeException)
-                        {
-                            loggedBlendShapeException = true;
-                            Logging.Verbose("[Apply] first BlendShape exception detail: " + e);
-                        }
-                    }
-                }
-            }
-            return imported;
-        }
-
-        private static Vector3[] TransformDeltas(Vector3[] source, Matrix4x4 fix)
-        {
-            var transformed = new Vector3[source.Length];
-            for (int i = 0; i < source.Length; i++)
-            {
-                if (!IsFinite(source[i])) throw new InvalidDataException($"non-finite delta at vertex {i}");
-                transformed[i] = fix.MultiplyVector(source[i]);
-            }
-            return transformed;
-        }
-
-        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
-
-        private static bool IsFinite(Vector3 value) =>
-            IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
 
         private static int CountFrames(IList<ModelBlendShape> shapes)
         {

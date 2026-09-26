@@ -1,4 +1,5 @@
 using System;
+using MitaAI;
 using UnityEngine;
 
 namespace NeuroMita.CustomModels
@@ -48,7 +49,9 @@ namespace NeuroMita.CustomModels
                     {
                         if (renderer == null || renderer.sharedMesh == null) continue;
 
-                        var mapping = LipSyncBlendShapeResolver.Resolve(renderer.sharedMesh);
+                        var names = CpuMorphRuntime.GetNames(renderer);
+                        var mapping = LipSyncBlendShapeResolver.Resolve(
+                            names ?? GetUnityBlendShapeNames(renderer.sharedMesh));
                         if (!mapping.HasA && !mapping.HasO) continue;
 
                         int score = (mapping.HasA && mapping.HasO) ? ScoreBothMouths : ScoreSingleMouth;
@@ -82,6 +85,20 @@ namespace NeuroMita.CustomModels
 
                 voice.RebindBlendshapes();
 
+                Transform owner = voice.transform;
+                int ownerDepth = 0;
+                while (owner != null && ownerDepth++ < 32)
+                {
+                    var actor = owner.GetComponent<MitaActor>();
+                    if (actor != null)
+                    {
+                        if (!actor.IsResolved) actor.ResolveComponents();
+                        MorphRuntimePatches.RegisterFaceController(actor.Face, actor.transform);
+                        break;
+                    }
+                    owner = owner.parent;
+                }
+
                 Logging.Info($"[LipSync] Bound Audio_BlendShapeVoice to '{bestRenderer.name}' " +
                              $"(score={bestScore}{(bestHint != null ? ", " + bestHint : "")}) " +
                              $"O -> {Format(bestMapping.OName, bestMapping.OIndex)}, " +
@@ -91,6 +108,14 @@ namespace NeuroMita.CustomModels
             {
                 Logging.Warn($"[LipSync] binding failed for '{characterRoot.name}': {e.GetType().Name}: {e.Message}");
             }
+        }
+
+        private static System.Collections.Generic.List<string> GetUnityBlendShapeNames(Mesh mesh)
+        {
+            var names = new System.Collections.Generic.List<string>();
+            if (mesh == null) return names;
+            for (int i = 0; i < mesh.blendShapeCount; i++) names.Add(mesh.GetBlendShapeName(i));
+            return names;
         }
 
         /// <summary>Head/Face в имени даёт только приоритет, но не является обязательным условием.</summary>
