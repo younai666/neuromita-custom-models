@@ -21,10 +21,43 @@ namespace NeuroMita.CustomModels
         /// 探测 native assimp 是否可用，只做一次。
         /// 这是最常见的安装问题，所以单独给一条可执行的指引，而不是让每个文件各抛一次异常。
         /// </summary>
+        /// <summary>
+        /// 显式加载插件目录下的原生 assimp.dll。
+        ///
+        /// AssimpNetter 6.0.5 是按 AppDomain.BaseDirectory（游戏根目录）找原生库的，
+        /// 而我们把 assimp.dll 放在 BepInEx\plugins\ 里。不预加载的话它在程序里
+        /// 永远找不到 —— 单独 LoadLibrary 能成功，一堆进游戏就报
+        /// "Error loading unmanaged library from path: assimp.dll (0x8007007E)"。
+        ///
+        /// 预加载一次之后，后续按名字的解析就会命中已加载的模块。
+        /// </summary>
+        private static void PreloadNativeLibrary()
+        {
+            try
+            {
+                var asmDir = Path.GetDirectoryName(typeof(FbxFilePackage).Assembly.Location);
+                if (string.IsNullOrEmpty(asmDir)) return;
+                var native = Path.Combine(asmDir, "assimp.dll");
+                if (!File.Exists(native)) return;
+                if (_nativePreloaded) return;
+                _nativePreloaded = true;
+                System.Runtime.InteropServices.NativeLibrary.Load(native);
+                Logging.Verbose("[Pkg] preloaded native assimp library: " + native);
+            }
+            catch (Exception e)
+            {
+                // 交给下面的探测去报错，这里不吞掉真正的原因
+                Logging.Verbose("[Pkg] native assimp preload skipped: " + e.Message);
+            }
+        }
+
+        private static bool _nativePreloaded;
         protected static bool EnsureNativeLibrary()
         {
             if (_nativeChecked) return _nativeAvailable;
             _nativeChecked = true;
+
+            PreloadNativeLibrary();
 
             try
             {
