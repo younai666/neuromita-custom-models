@@ -62,7 +62,7 @@ AssetsTools.NET.dll          <- read the UnityFS container
 AssetsTools.NET.Texture.dll  <- decode its textures
 AssetRipper.TextureDecoder.dll
 AssimpNetter.dll             <- read FBX packs
-assimp.dll                   <- native library for AssimpNet
+assimp.dll                   <- native library for AssimpNetter
 ```
 
 If `AssetsTools.NET.dll` (or one of the other two AssetsTools files) is missing, the AssetBundle

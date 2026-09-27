@@ -109,6 +109,22 @@ if ((Test-Path $myPlugins) -and ($myPlugins -ne $destPlugins)) {
          'Extract the whole archive, do not move files out of it.'
 }
 
+# Older releases shipped AssimpNet.dll. This one ships AssimpNetter.dll (a fork that exposes the
+# morph-target names FBX lip sync needs). Left behind, the two sit side by side in the same
+# 'Assimp' namespace, which is asking for trouble — so clean up after an upgrade.
+$obsolete = @('AssimpNet.dll')
+$removed = @()
+foreach ($name in $obsolete) {
+    $stale = Join-Path $destPlugins $name
+    if (Test-Path $stale) {
+        Remove-Item $stale -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path $stale)) { $removed += $name }
+    }
+}
+if ($removed.Count -gt 0) {
+    Say ("        removed outdated: {0}" -f ($removed -join ', ')) 'Yellow'
+}
+
 # ---------------------------------------------------------------- 3. BepInEx
 
 Say ''

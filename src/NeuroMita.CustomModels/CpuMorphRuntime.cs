@@ -41,6 +41,9 @@ namespace NeuroMita.CustomModels
             public readonly HashSet<int> ExpressionChannels = new HashSet<int>();
             public bool Dirty;
             public bool LoggedMotion;
+            /// <summary>上一次 Apply 是否真的叠加过形变。用来在"从有到无"时只恢复一次，
+            /// 之后彻底不再重写网格（空闲时的每帧重写是纯浪费）。</summary>
+            public bool AppliedSomething;
         }
 
         private static readonly Dictionary<int, State> ByRenderer = new Dictionary<int, State>();
@@ -218,28 +221,62 @@ namespace NeuroMita.CustomModels
 
         private static void Apply(State state)
         {
-            for (int i = 0; i < state.BaseVertices.Length; i++) state.VertexBuffer[i] = state.BaseVertices[i];
-            if (state.NormalBuffer != null)
-                for (int i = 0; i < state.BaseNormals.Length; i++) state.NormalBuffer[i] = state.BaseNormals[i];
-            if (state.TangentBuffer != null)
-                for (int i = 0; i < state.BaseTangents.Length; i++) state.TangentBuffer[i] = state.BaseTangents[i];
-
+            bool anyActive = false;
             for (int i = 0; i < state.Channels.Count; i++)
             {
-                float weight = EffectiveWeight(state, i);
-                if (weight <= 0.001f) continue;
-                Blend(state.Channels[i], weight, state.VertexBuffer, state.NormalBuffer, state.TangentBuffer);
+                if (EffectiveWeight(state, i) > 0.001f) { anyActive = true; break; }
+            }
+
+            // 空闲时不再重写整个网格。上一次也没叠加过的话，顶点本来就是基准值 —— 直接走人。
+            // 这是最省的一条：说话停下来的绝大部分帧都会命中这里。
+            if (!anyActive && !state.AppliedSomething) return;
+
+            // 法线/切线只看"这个网格有没有任何形变帧带它们"，【不能】只看当前有权重的通道：
+            // 表情结束、权重全部归零时，法线必须被恢复回基准值；如果这时判定成"不用管法线"，
+            // 网格就会一直留着上一次形变的法线。
+            bool hasNormals = false, hasTangents = false;
+            for (int i = 0; i < state.Channels.Count && !(hasNormals && hasTangents); i++)
+            {
+                var frames = state.Channels[i].Frames;
+                for (int k = 0; k < frames.Count; k++)
+                {
+                    if (frames[k].Normals != null) hasNormals = true;
+                    if (frames[k].Tangents != null) hasTangents = true;
+                }
+            }
+
+            bool writeNormals = state.NormalBuffer != null && state.BaseNormals != null && hasNormals;
+            bool writeTangents = state.TangentBuffer != null && state.BaseTangents != null && hasTangents;
+
+            for (int i = 0; i < state.BaseVertices.Length; i++) state.VertexBuffer[i] = state.BaseVertices[i];
+            if (writeNormals)
+                for (int i = 0; i < state.BaseNormals.Length; i++) state.NormalBuffer[i] = state.BaseNormals[i];
+            if (writeTangents)
+                for (int i = 0; i < state.BaseTangents.Length; i++) state.TangentBuffer[i] = state.BaseTangents[i];
+
+            if (anyActive)
+            {
+                for (int i = 0; i < state.Channels.Count; i++)
+                {
+                    float weight = EffectiveWeight(state, i);
+                    if (weight <= 0.001f) continue;
+                    Blend(state.Channels[i], weight, state.VertexBuffer,
+                          writeNormals ? state.NormalBuffer : null,
+                          writeTangents ? state.TangentBuffer : null);
+                }
             }
 
             state.Mesh.vertices = state.VertexBuffer;
-            if (state.NormalBuffer != null)
+            if (writeNormals)
             {
                 for (int i = 0; i < state.NormalBuffer.Length; i++) state.NormalBuffer[i] = state.NormalBuffer[i].normalized;
                 state.Mesh.normals = state.NormalBuffer;
             }
-            if (state.TangentBuffer != null) state.Mesh.tangents = state.TangentBuffer;
+            if (writeTangents) state.Mesh.tangents = state.TangentBuffer;
             state.Mesh.RecalculateBounds();
-            if (!state.LoggedMotion)
+            state.AppliedSomething = anyActive;
+
+            if (!state.LoggedMotion && anyActive)
             {
                 for (int i = 0; i < state.BaseVertices.Length; i++)
                 {
