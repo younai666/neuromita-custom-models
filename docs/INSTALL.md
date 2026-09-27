@@ -112,21 +112,21 @@ BepInEx\plugins\
 ├── AssetsTools.NET.dll                 <- AssetBundle (.vrmmod) reading
 ├── AssetsTools.NET.Texture.dll
 ├── AssetRipper.TextureDecoder.dll
-├── AssimpNet.dll                       <- FBX reading
+├── AssimpNetter.dll                    <- FBX reading
 └── assimp.dll                          <- native library for the above
 ```
 
 > ### All six are required
 >
 > Do **not** copy files by hand from an older guide. Earlier versions of this plugin shipped only
-> three DLLs (`NeuroMita.CustomModels.dll`, `AssimpNet.dll`, `assimp.dll`); AssetBundle support added
+> three DLLs (`NeuroMita.CustomModels.dll`, `AssimpNetter.dll`, `assimp.dll`); AssetBundle support added
 > the other three. If `AssetsTools.NET.dll` is missing, **every `.vrmmod` pack fails to load** — the
 > plugin itself still loads, so it looks like the packs are broken rather than the install.
 >
 > The same applies in reverse: without `assimp.dll` FBX packs cannot be read, and the log says so
 > explicitly (`native assimp library not found`) rather than failing silently.
 
-Nothing goes in the game root folder, and you do **not** need to install AssetsTools.NET or AssimpNet
+Nothing goes in the game root folder, and you do **not** need to install AssetsTools.NET or AssimpNetter
 yourself — they are in the release zip.
 
 ---

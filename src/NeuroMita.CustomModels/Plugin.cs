@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using BepInEx;
 using BepInEx.Configuration;
+using HarmonyLib;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
@@ -59,6 +60,7 @@ namespace NeuroMita.CustomModels
                 var go = new GameObject("NeuroMita.CustomModels");
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 go.AddComponent<ModelRuntime>();
+                MorphRuntimePatches.Install(new Harmony(PluginGuid + ".morphs"));
                 Logging.Info("[CM] runtime injected");
             }
             catch (Exception e)
@@ -95,6 +97,8 @@ namespace NeuroMita.CustomModels
             if (_done || _ticks % 120 != 0) return;
             _done = TryRun();
         }
+
+        private void LateUpdate() => CpuMorphRuntime.ApplyPending();
 
         private bool TryRun()
         {
@@ -444,7 +448,19 @@ namespace NeuroMita.CustomModels
             return list;
         }
 
+        /// <summary>
+        /// Установка одного пакета целиком.
+        ///
+        /// Липсинк привязывается ОДИН раз — после того как все части поставлены.
+        /// Раньше вызов сидел в ModelApplier.Apply и срабатывал на каждом part,
+        /// из-за чего в многопартовом пакете выбор головы зависел от порядка частей.
+        /// </summary>
         private static void InstallOne(string path, Transform root, string mitaName)
+        {
+            if (InstallOneCore(path, root, mitaName)) LipSyncBinder.BindBest(root);
+        }
+
+        private static bool InstallOneCore(string path, Transform root, string mitaName)
         {
             var fmt = ModelPackage.DetectFormat(path);
             Logging.Info($"[CM] format: {fmt}");
@@ -460,13 +476,13 @@ namespace NeuroMita.CustomModels
                 if (pkg == null)
                 {
                     Logging.Error($"[CM] unsupported package format: {path}");
-                    return;
+                    return false;
                 }
                 if (!pkg.Open())
                 {
                     Logging.Error($"[CM] failed to open: {path}");
                     pkg.Dispose();
-                    return;
+                    return false;
                 }
                 _pkgCache[path] = pkg;
             }
@@ -477,7 +493,7 @@ namespace NeuroMita.CustomModels
 
             {
                 Logging.Info($"[CM] parts: {pkg.Parts.Count}");
-                if (pkg.Parts.Count == 0) return;
+                if (pkg.Parts.Count == 0) return false;
 
                 var dirPkg = pkg as FbxDirPackage;
                 if (dirPkg != null && !string.IsNullOrEmpty(dirPkg.ConfigText))
@@ -493,7 +509,7 @@ namespace NeuroMita.CustomModels
                         var rep = installer.Run(cfg.Buttons[0], mitaName);
                         Logging.Info($"[CM] INSTALL RESULT {rep}");
                         foreach (var err in rep.Errors) Logging.Warn("[CM]   err: " + err);
-                        return;
+                        return rep.Replaced > 0;
                     }
                     Logging.Warn("[CM] config has no button, falling back to single-part replace");
                 }
@@ -528,7 +544,7 @@ namespace NeuroMita.CustomModels
                     if (applied > 0)
                     {
                         Logging.Info($"[CM] auto-slotted {applied}/{pkg.Parts.Count} parts");
-                        return;
+                        return true;
                     }
                     Logging.Warn("[CM] no part matched any slot; falling back to whole-body replace");
                 }
@@ -540,11 +556,11 @@ namespace NeuroMita.CustomModels
                     if (body == null)
                     {
                         Logging.Error($"[CM] no SkinnedMeshRenderer matching fallback '{Plugin.CfgFallbackRenderer.Value}'");
-                        return;
+                        return false;
                     }
 
                     var part = PickWholeBodyPart(pkg);
-                    if (part == null) { Logging.Error("[CM] package has no usable mesh"); return; }
+                    if (part == null) { Logging.Error("[CM] package has no usable mesh"); return false; }
                     Logging.Verbose($"[CM] whole-body part: '{part.Name}' (" +
                                     $"{part.Mesh.vertexCount} verts) of {pkg.Parts.Count} part(s)");
                     Logging.Info($"[CM] applying '{part.Name}' -> '{body.gameObject.name}' (whole-body)");
@@ -560,6 +576,7 @@ namespace NeuroMita.CustomModels
                         int hidden = HideOtherRenderers(root, body, pkg.Parts.Count);
                         Logging.Info($"[CM] whole-body replace: hid {hidden} other renderer(s)");
                     }
+                    return r.Ok;
                 }
             }
         }
@@ -656,41 +673,51 @@ namespace NeuroMita.CustomModels
             return n;
         }
 
-        /// <summary>
-        /// 按部件名给 renderer 打分选最合适的一个。
-        /// 包的部件名千奇百怪（Body / Clothes / Arm / Head / Hair / Sweater...），
-        /// 这里只做"关键词包含"的宽松匹配。
-        /// </summary>
+        /// <summary>按部件、renderer、mesh 和材质语义选择唯一匹配的槽位。</summary>
         private static SkinnedMeshRenderer FindBestRenderer(Transform root, string partName, HashSet<int> usedSlots)
         {
             try
             {
                 var smrs = root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
                 if (smrs == null || smrs.Length == 0) return null;
-
-                string key = null;
-                var low = (partName ?? "").ToLowerInvariant();
-                // 精确槽位名表已移除：其中大部分名字（sweaterslot / skirtslot / shoesslot /
-                // attributeslot）在实测日志里从未出现过，属于猜测。下面的模糊匹配本就覆盖
-                // 这些情况，而且不依赖硬编码的游戏内部命名。
-                if (low.Contains("hair")) key = "hair";
-                else if (low.Contains("head") || low.Contains("face")) key = "head";
-                else if (low.Contains("arm") || low.Contains("hand") || low.Contains("glove")) key = "arm";
-                else if (low.Contains("cloth") || low.Contains("sweater") || low.Contains("body")
-                         || low.Contains("skirt") || low.Contains("pant") || low.Contains("shoe")) key = "body";
-
-                if (key == null) return null;
-
+                SkinnedMeshRenderer best = null;
+                int bestScore = 0;
+                bool ambiguous = false;
                 foreach (var s in smrs)
                 {
                     if (s == null || usedSlots.Contains(s.GetInstanceID())) continue;
-                    var n = (s.gameObject != null ? s.gameObject.name : "").ToLowerInvariant();
-                    bool hit = key == "hair" ? n.Contains("hair")
-                             : key == "head" ? (n.Contains("head") || n.Contains("face"))
-                             : key == "arm" ? n.Contains("arm")
-                             : (n.Contains("body") || n.Contains("cloth"));
-                    if (hit) return s;
+                    var materialNames = new List<string>();
+                    try
+                    {
+                        var materials = s.sharedMaterials;
+                        if (materials != null)
+                            foreach (var material in materials)
+                                if (material != null) materialNames.Add(material.name);
+                    }
+                    catch { }
+                    string rendererName = s.gameObject != null ? s.gameObject.name : "";
+                    string meshName = s.sharedMesh != null ? s.sharedMesh.name : "";
+                    int score = RendererSlotMatcher.Score(partName, rendererName, meshName, materialNames);
+                    if (score > bestScore)
+                    {
+                        best = s;
+                        bestScore = score;
+                        ambiguous = false;
+                    }
+                    else if (score > 0 && score == bestScore)
+                    {
+                        ambiguous = true;
+                    }
                 }
+                if (ambiguous)
+                {
+                    Logging.Warn($"[CM] ambiguous renderer slots for part '{partName}' (score={bestScore}); skipped");
+                    return null;
+                }
+                if (best != null)
+                    Logging.Verbose($"[CM] slot match part='{partName}' renderer='{best.gameObject.name}' " +
+                                    $"mesh='{(best.sharedMesh != null ? best.sharedMesh.name : "")}' score={bestScore}");
+                return best;
             }
             catch { }
             return null;

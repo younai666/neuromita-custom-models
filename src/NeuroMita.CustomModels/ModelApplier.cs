@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace NeuroMita.CustomModels
@@ -188,8 +189,12 @@ namespace NeuroMita.CustomModels
                 mesh.bindposes = bindposes;
                 target.sharedMesh = mesh;
                 target.bones = bones;
+                bool morphsRegistered = CpuMorphRuntime.Register(target, mesh, part.BlendShapes, align.Fix);
                 if (bones.Length > 0 && bones[0] != null) target.rootBone = skeletonRoot;
                 target.updateWhenOffscreen = true;
+                Logging.Verbose($"[Apply] blendShapes source={(part.BlendShapes != null ? part.BlendShapes.Count : 0)} " +
+                                $"frames={CountFrames(part.BlendShapes)} cpuFallback={morphsRegistered}");
+                LogBlendShapes(mesh);
 
                 rep.Ok = true;
                 rep.Bones = count;
@@ -241,6 +246,22 @@ namespace NeuroMita.CustomModels
             }
 
             mesh.RecalculateBounds();
+        }
+
+        private static int CountFrames(IList<ModelBlendShape> shapes)
+        {
+            if (shapes == null) return 0;
+            int result = 0;
+            foreach (var shape in shapes) if (shape != null && shape.Frames != null) result += shape.Frames.Count;
+            return result;
+        }
+
+        private static void LogBlendShapes(Mesh mesh)
+        {
+            if (!Logging.VerboseEnabled || mesh == null) return;
+            Logging.Verbose($"[Apply] mesh={mesh.name} vertexCount={mesh.vertexCount} blendShapeCount={mesh.blendShapeCount}");
+            for (int i = 0; i < mesh.blendShapeCount; i++)
+                Logging.Verbose($"[Apply]   blendshape[{i}] {mesh.GetBlendShapeName(i)}");
         }
 
         /// <summary>
