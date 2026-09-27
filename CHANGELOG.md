@@ -3,6 +3,59 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versioning is [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — 2026-09-28
+
+Lip sync, plus the fixes found while reviewing it. Thanks to **VinerX** (NeuroMita developer) for
+the lip-sync implementation — see PR #2.
+
+### Added
+
+- **Lip sync for replacement models.** The plugin reads the blend shapes out of the pack (FBX morph
+  targets and AssetBundle `m_Shapes`), rebuilds them on the replacement mesh, and routes the game's
+  `Audio_BlendShapeVoice` at it. Mouth shapes are matched by name, so packs naming them `A`/`O`,
+  `MouthA`, `Mouth_O`, `Fcl_MTH_A`, `vrc.v_aa` or the game's own `CtrlMouthA`/`CtrlMouthO` all work.
+  The morphing happens in managed code against a cached base mesh — Unity's own blend-shape API is
+  not involved, because it is not usable at runtime here.
+- Face-expression plumbing for `MitaFaceController` (`SetEmotion`, `SetEmotionOff`,
+  `BlendShapesDomain.SetWeight`/`Clear`). **Expressions are not working yet** — the patches install
+  and are routed, but no visible change was confirmed. Treat this as groundwork only.
+- `tests/LipSyncBlendShapeResolver.Tests` — pins the shape-name conventions down, including the
+  negative cases, because a failed match is silent (the model loads, the face just never moves).
+
+### Fixed
+
+- **FBX packs could not be read at all.** `AssimpNet` was replaced with `AssimpNetter` (its fork
+  exposes the morph-target names lip sync needs), and the new package resolves its native library
+  through the application base directory — the game root — rather than `BepInEx\plugins\`, where the
+  plugin puts it. Every FBX file failed with `Error loading unmanaged library from path: assimp.dll`.
+  The plugin now loads the file from its own folder before Assimp looks for it. This is why the lip
+  sync PR looked fine on its own test case: that case is an AssetBundle, which never goes near assimp.
+- **Harmony patch failures were reported as successes.** `Harmony.Patch` does not throw when the
+  IL2CPP backend refuses a target — it only logs internally — so the plugin printed `installed patch`
+  for patches that were not in effect. It now checks the real state and warns when a patch did not
+  register.
+- **Upgrading left the old `AssimpNet.dll` behind**, next to the new `AssimpNetter.dll` in the same
+  `Assimp` namespace. `install.ps1` now removes it.
+- **Normals could stay morphed after an expression ended.** The morph runtime decided whether to
+  touch normals from the currently-weighted channels, so when every weight returned to zero the
+  morphed normals were never restored.
+- **The morph runtime rewrote the whole vertex buffer on every dirty frame**, including the frames
+  where nothing was active. It now stops as soon as there is nothing to apply, and only touches
+  normals and tangents when the pack's shape frames actually carry them. While a morph is genuinely
+  animating, the full rewrite is inherent to morphing on the CPU and remains.
+- **`GetNativePointer` walked the type hierarchy on every call**, on the path taken by every face
+  weight write. The reflection lookup is cached per type now, negative results included. Same for the
+  `Length`/`Item` accessors used when reading the game's weight arrays.
+- **The face-controller maps only ever grew**, and native pointers get reused across scene loads.
+  Entries whose `Transform` has been destroyed are dropped on access.
+- **Two argument-validation paths skipped the original game method** instead of letting it run,
+  which would have made the game's own face writes disappear.
+
+### Changed
+
+- `NOTICE` covers **AssimpNetter** (MIT, dual copyright with AssimpNet) instead of AssimpNet, and now
+  includes **Poly2Tri**, which Assimp bundles and the notice had missed.
+
 ## [0.2.1] — 2026-09-26
 
 Documentation and packaging only — plugin behaviour is unchanged from 0.2.0.

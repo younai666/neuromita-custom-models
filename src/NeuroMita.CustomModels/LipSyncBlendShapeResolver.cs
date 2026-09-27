@@ -85,7 +85,17 @@ namespace NeuroMita.CustomModels
             var builder = new StringBuilder(value.Length);
             foreach (char c in value)
                 if (char.IsLetterOrDigit(c)) builder.Append(char.ToLowerInvariant(c));
-            return builder.ToString();
+            string normalized = builder.ToString();
+
+            // The game's own face contract names carry a Ctrl prefix -- CtrlMouthA, CtrlMouthO,
+            // CtrlBlink, CtrlSurprised and so on. A pack built on the game's skeleton most
+            // naturally reuses exactly those names, and without this the lipsync binding silently
+            // fails to find them (the "mouth"/"fclmth"/"vrcv" checks below never see past "ctrl").
+            // Stripping it here makes both the exact-normalised step and the prefix step match.
+            if (normalized.Length > 4 && normalized.StartsWith("ctrl", StringComparison.Ordinal))
+                normalized = normalized.Substring(4);
+
+            return normalized;
         }
     }
 }

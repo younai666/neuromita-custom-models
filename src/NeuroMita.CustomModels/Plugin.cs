@@ -14,7 +14,7 @@ namespace NeuroMita.CustomModels
     {
         public const string PluginGuid = "com.neuromita.custommodels";
         public const string PluginName = "NeuroMita.CustomModels";
-        public const string PluginVersion = "0.2.1";
+        public const string PluginVersion = "0.2.2";
 
         internal static ConfigEntry<bool> CfgEnabled;
         internal static ConfigEntry<string> CfgPackDir;
