@@ -22,7 +22,7 @@ is waiting it says so once per character:
 [CM]   waiting; scene has: Scene/Mita Hands/Body (active=True)
 ```
 
-Enter a house (main menu → `米塔选择` → any Mita). You should then see the character being picked up:
+Enter a house (main menu → the character-select menu → any Mita). You should then see the character being picked up:
 
 ```
 [CM] ===== character 'Crazy' -> 'Mita Crazy' (1 pack(s)) =====

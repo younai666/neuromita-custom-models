@@ -190,8 +190,8 @@ yourself — they are in the release zip.
 
 ## Launching and verifying
 
-Start the game normally and **enter a scene where a Mita is present** (main menu → `米塔选择` →
-a house). The plugin waits until a character exists.
+Start the game normally and **enter a scene where a Mita is present** (main menu → the
+character-select menu → a house). The plugin waits until a character exists.
 
 Open `BepInEx\LogOutput.log` and look for the install block.
 

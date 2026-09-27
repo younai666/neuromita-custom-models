@@ -1,29 +1,33 @@
-把模型包放进这个文件夹里。
+Клади паки моделей в эту папку.
 Put your model packs in this folder.
 
-每个包一个子文件夹 / One subfolder per pack:
+Одна подпапка на пак / One subfolder per pack:
 
     CustomModels\
     ├── SomePack\
-    │   └── ...          (addons_config.txt + *.fbx，或一个 .vrmmod 文件)
+    │   └── ...          (addons_config.txt + *.fbx, или один файл .vrmmod)
     └── AnotherPack\
 
-想同时替换多个角色，改用【角色文件夹】/ To drive several characters at once,
-use character folders instead:
+Чтобы заменить несколько персонажей сразу, используй папки персонажей.
+To drive several characters at once, use character folders instead:
 
     CustomModels\
-    ├── Player\        <- 玩家 / the player character
-    ├── Crazy\         <- 疯狂米塔 / Crazy Mita
-    ├── Kind\          <- 善良米塔 / Kind Mita
-    ├── Mappie\ 或 Cappy\
+    ├── Player\        <- игрок / the player character
+    ├── Crazy\         <- Crazy Mita
+    ├── Kind\          <- Kind Mita
+    ├── Mappie\ или Cappy\
     ├── ShortHair\
     ├── Mila\
-    ├── Sleepy\ 或 Dream\
+    ├── Sleepy\ или Dream\
     └── Ghost\
 
-角色文件夹里的每个包会被路由到对应角色，而且场景里同一角色的每个实例都会被替换。
+Каждый пак в папке персонажа попадает на своего персонажа, и заменяются все
+экземпляры этого персонажа в сцене.
+Every pack in a character folder is routed to that character, and every instance
+of the character in the scene is replaced.
 
-在角色文件夹模式下不需要设置 TargetAvatar。
+В режиме папок персонажей TargetAvatar указывать не нужно.
+TargetAvatar is not needed in character-folder mode.
 
-详见 docs\INSTALL.md 第 3 步。
+Подробнее: docs\INSTALL.md, шаг 3.
 See docs\INSTALL.md step 3 for details.
